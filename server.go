@@ -20,8 +20,8 @@ type eventID int
 
 type eventS struct {
 	id int
-	mr *MsgStream
 	m *Msg
+	peer *RtmpPeer
 }
 
 func (e eventS) String() string {
@@ -85,70 +85,70 @@ func (s *RtmpServer) ServeClient(c io.ReadWriteCloser) {
 }
 
 func (s *RtmpServer)Loop() {
-	idmap := map[string]*MsgStream{}
-	pubmap := map[string]*MsgStream{}
+	idmap := map[string]*RtmpPeer{}
+	pubmap := map[string]*RtmpPeer{}
 
 	for {
 		e := <- s.event
 		if e.id == E_DATA {
-			l.Printf("data %v: %v", e.mr, e)
+			l.Printf("data %v: %v", e.peer, e)
 		} else {
-			l.Printf("event %v: %v", e.mr, e)
+			l.Printf("event %v: %v", e.peer, e)
 		}
-		switch {
-		case e.id == E_NEW:
-			idmap[e.mr.id] = e.mr
-		case e.id == E_PUBLISH:
-			if _, ok := pubmap[e.mr.app]; ok {
-				l.Printf("event %v: duplicated publish with %v app %s", e.mr, pubmap[e.mr.app], e.mr.app)
-				e.mr.Close()
+		switch e.id {
+		case E_NEW:
+			idmap[e.peer.id] = e.peer
+		case E_PUBLISH:
+			if _, ok := pubmap[e.peer.app]; ok {
+				l.Printf("event %v: duplicated publish with %v app %s", e.peer, pubmap[e.peer.app], e.peer.app)
+				e.peer.mr.Close()
 			} else {
-				e.mr.role = PUBLISHER
-				pubmap[e.mr.app] = e.mr
+				e.peer.role = PUBLISHER
+				pubmap[e.peer.app] = e.peer
 			}
-		case e.id == E_PLAY:
-			e.mr.role = PLAYER
-			e.mr.que = make(chan *Msg, 16)
-			for _, mr := range idmap {
-				if mr.role == PUBLISHER && mr.app == e.mr.app && mr.stat == WAIT_DATA {
-					e.mr.W = mr.W
-					e.mr.H = mr.H
-					e.mr.extraA = mr.extraA
-					e.mr.extraV = mr.extraV
-					e.mr.meta = mr.meta
+		case E_PLAY:
+			e.peer.role = PLAYER
+			e.peer.que = make(chan *Msg, 16)
+			for _, peer := range idmap {
+				if peer.role == PUBLISHER && peer.app == e.peer.app && peer.stat == WAIT_DATA {
+					e.peer.W = peer.W
+					e.peer.H = peer.H
+					e.peer.extraA = peer.extraA
+					e.peer.extraV = peer.extraV
+					e.peer.meta = peer.meta
 				}
 			}
-		case e.id == E_CLOSE:
-			if e.mr.role == PUBLISHER {
-				delete(pubmap, e.mr.app)
-				for _, mr := range idmap {
-					if mr.role == PLAYER && mr.app == e.mr.app {
-						ch := reflect.ValueOf(mr.que)
+		case E_CLOSE:
+			if e.peer.role == PUBLISHER {
+				delete(pubmap, e.peer.app)
+				for _, peer := range idmap {
+					if peer.role == PLAYER && peer.app == e.peer.app {
+						ch := reflect.ValueOf(peer.que)
 						var m *Msg = nil
 						ch.TrySend(reflect.ValueOf(m))
 					}
 				}
 			}
-			delete(idmap, e.mr.id)
-		case e.id == E_EXTRA:
-			for _, mr := range idmap {
-				if mr.role == PLAYER && mr.app == e.mr.app {
-					mr.W = e.mr.W
-					mr.H = e.mr.H
-					mr.extraA = e.mr.extraA
-					mr.extraV = e.mr.extraV
-					mr.meta = e.mr.meta
+			delete(idmap, e.peer.id)
+		case E_EXTRA:
+			for _, peer := range idmap {
+				if peer.role == PLAYER && peer.app == e.peer.app {
+					peer.W = e.peer.W
+					peer.H = e.peer.H
+					peer.extraA = e.peer.extraA
+					peer.extraV = e.peer.extraV
+					peer.meta = e.peer.meta
 				}
 			}
-		case e.id == E_DATA && e.mr.stat == WAIT_DATA:
-			for _, mr := range idmap {
-				if mr.role == PLAYER && mr.app == e.mr.app {
-					ch := reflect.ValueOf(mr.que)
+		case E_DATA:
+			for _, peer := range idmap {
+				if peer.role == PLAYER && peer.app == e.peer.app {
+					ch := reflect.ValueOf(peer.que)
 					ok := ch.TrySend(reflect.ValueOf(e.m))
 					if !ok {
-						l.Printf("event %v: send failed", e.mr)
+						l.Printf("event %v: send failed", e.peer)
 					} else {
-						l.Printf("event %v: send ok", e.mr)
+						l.Printf("event %v: send ok", e.peer)
 					}
 				}
 			}
@@ -160,22 +160,37 @@ func (s *RtmpServer)Loop() {
 
 
 type RtmpPeer struct {
+	id string
 	s *RtmpServer
 	mr *MsgStream
+
+	meta AMFObj
+	role int
+	stat int
+	app string
+	W,H int
+	extraA, extraV []byte
+	que chan *Msg
+	l *log.Logger
 }
 
 func NewRtmpPeer(s *RtmpServer, c io.ReadWriteCloser) *RtmpPeer {
 	mr := NewMsgStream(c)
-	s.event <- eventS{id:E_NEW, mr:mr}
+	peer := &RtmpPeer{id: mr.id, s: s, mr:mr}
+	s.event <- eventS{id:E_NEW, peer: peer}
 	<- s.eventDone
-	return &RtmpPeer{s, mr}
+	return peer
+}
+
+func (p *RtmpPeer) String() string {
+	return p.id
 }
 
 func (p *RtmpPeer) handleConnect(trans float64, app string) {
 
 	l.Printf("stream %v: connect: %s", p.mr, app)
 
-	p.mr.app = app
+	p.app = app
 
 	p.mr.WriteMsg32(2, MSG_ACK_SIZE, 0, 5000000)
 	p.mr.WriteMsg32(2, MSG_BANDWIDTH, 0, 5000000)
@@ -203,11 +218,11 @@ func (p *RtmpPeer) handleConnect(trans float64, app string) {
 
 func (p *RtmpPeer) handleMeta(obj AMFObj) {
 
-	p.mr.meta = obj
-	p.mr.W = int(obj.obj["width"].f64)
-	p.mr.H = int(obj.obj["height"].f64)
+	p.meta = obj
+	p.W = int(obj.obj["width"].f64)
+	p.H = int(obj.obj["height"].f64)
 
-	l.Printf("stream %v: meta video %dx%d (%v)", p.mr, p.mr.W, p.mr.H, obj)
+	l.Printf("stream %v: meta video %dx%d (%v)", p.mr, p.W, p.H, obj)
 }
 
 func (p *RtmpPeer) handleCreateStream(trans float64) {
@@ -242,7 +257,7 @@ func (p *RtmpPeer) handlePublish() {
 		},
 	})
 
-	p.s.event <- eventS{id:E_PUBLISH, mr:p.mr}
+	p.s.event <- eventS{id:E_PUBLISH, peer: p}
 	<- p.s.eventDone
 }
 
@@ -294,13 +309,13 @@ func (p *RtmpPeer) handlePlay(strid int) {
 	//tsrc = tsrcNew()
 
 	if tsrc == nil {
-		p.s.event <- eventS{id:E_PLAY, mr:p.mr}
+		p.s.event <- eventS{id:E_PLAY, peer: p}
 		<- p.s.eventDone
 	} else {
 		l.Printf("stream %v: test play data in %s", p.mr, tsrc.dir)
-		p.mr.W = tsrc.w
-		p.mr.H = tsrc.h
-		l.Printf("stream %v: test video %dx%d", p.mr, p.mr.W, p.mr.H)
+		p.W = tsrc.w
+		p.H = tsrc.h
+		l.Printf("stream %v: test video %dx%d", p.mr, p.W, p.H)
 	}
 
 	begin := func () {
@@ -323,7 +338,7 @@ func (p *RtmpPeer) handlePlay(strid int) {
 			},
 		})
 
-		l.Printf("stream %v: begin: video %dx%d", p.mr, p.mr.W, p.mr.H)
+		l.Printf("stream %v: begin: video %dx%d", p.mr, p.W, p.H)
 
 		p.mr.WriteAMFMeta(5, strid, []AMFObj {
 			AMFObj { atype : AMF_STRING, str : "|RtmpSampleAccess", },
@@ -331,12 +346,12 @@ func (p *RtmpPeer) handlePlay(strid int) {
 			AMFObj { atype : AMF_BOOLEAN, i: 1, },
 		})
 
-		p.mr.meta.obj["Server"] = AMFObj { atype : AMF_STRING, str : "Golang Rtmp Server", }
-		p.mr.meta.atype = AMF_OBJECT
-		l.Printf("stream %v: %v", p.mr, p.mr.meta)
+		p.meta.obj["Server"] = AMFObj { atype : AMF_STRING, str : "Golang Rtmp Server", }
+		p.meta.atype = AMF_OBJECT
+		l.Printf("stream %v: %v", p.mr, p.meta)
 		p.mr.WriteAMFMeta(5, strid, []AMFObj {
 			AMFObj { atype : AMF_STRING, str : "onMetaData", },
-			p.mr.meta,
+			p.meta,
 			/*
 			AMFObj { atype : AMF_OBJECT,
 				obj : map[string] AMFObj {
@@ -386,7 +401,7 @@ func (p *RtmpPeer) handlePlay(strid int) {
 			nr := 0
 
 			for {
-				m := <-p.mr.que
+				m := <-p.que
 				if m == nil {
 					break
 				}
@@ -395,9 +410,9 @@ func (p *RtmpPeer) handlePlay(strid int) {
 				//}
 				if nr == 0 {
 					begin()
-					l.Printf("stream %v: extra size %d %d", p.mr, len(p.mr.extraA), len(p.mr.extraV))
-					p.mr.WriteAAC(strid, 0, p.mr.extraA[2:])
-					p.mr.WritePPS(strid, 0, p.mr.extraV[5:])
+					l.Printf("stream %v: extra size %d %d", p.mr, len(p.extraA), len(p.extraV))
+					p.mr.WriteAAC(strid, 0, p.extraA[2:])
+					p.mr.WritePPS(strid, 0, p.extraV[5:])
 				}
 				l.Printf("data %v: got %v curts %v", p.mr, m, m.curts)
 				switch m.typeid {
@@ -455,7 +470,7 @@ func (p *RtmpPeer) handlePlay(strid int) {
 func (p *RtmpPeer) serve() {
 	defer func() {
 		if err := recover(); err != nil {
-			p.s.event <- eventS{id:E_CLOSE, mr:p.mr}
+			p.s.event <- eventS{id:E_CLOSE, peer: p}
 			<- p.s.eventDone
 			l.Printf("stream %v: closed %v", p.mr, err)
 			//if err != "EOF" {
@@ -469,7 +484,7 @@ func (p *RtmpPeer) serve() {
 	}
 
 	f, _ := os.Create("/tmp/pub.log")
-	p.mr.l = log.New(f, "", 0)
+	p.l = log.New(f, "", 0)
 
 	for {
 		m := p.mr.ReadMsg()
@@ -480,26 +495,26 @@ func (p *RtmpPeer) serve() {
 		l.Printf("stream %v: msg %v", p.mr, m)
 
 		if m.typeid == MSG_AUDIO || m.typeid == MSG_VIDEO {
-			if p.mr.stat == WAIT_EXTRA {
-				if len(p.mr.extraA) == 0 && m.typeid == MSG_AUDIO {
-			        p.mr.l.Printf("event %v: extra got aac config", p.mr)
-			        p.mr.extraA = m.data.Bytes()
+			if p.stat == WAIT_EXTRA {
+				if len(p.extraA) == 0 && m.typeid == MSG_AUDIO {
+			        p.l.Printf("event %v: extra got aac config", p.mr)
+			        p.extraA = m.data.Bytes()
 		        }
 
-				if len(p.mr.extraV) == 0 && m.typeid == MSG_VIDEO {
+				if len(p.extraV) == 0 && m.typeid == MSG_VIDEO {
 					l.Printf("event %v: extra got pps", p.mr)
-					p.mr.extraV = m.data.Bytes()
+					p.extraV = m.data.Bytes()
 				}
-				if len(p.mr.extraA) > 0 && len(p.mr.extraV) > 0 {
+				if len(p.extraA) > 0 && len(p.extraV) > 0 {
 					l.Printf("event %v: got all extra", p.mr)
-					p.mr.stat = WAIT_DATA
-					p.s.event <- eventS{id:E_EXTRA, mr:p.mr}
+					p.stat = WAIT_DATA
+					p.s.event <- eventS{id:E_EXTRA, peer: p}
 					<- p.s.eventDone
 				}
 
 			} else {
-				p.mr.l.Printf("%d,%d", m.typeid, m.data.Len())
-				p.s.event <- eventS{id:E_DATA, mr:p.mr, m:m}
+				p.l.Printf("%d,%d", m.typeid, m.data.Len())
+				p.s.event <- eventS{id:E_DATA, m:m, peer: p}
 				<- p.s.eventDone
 			}
 		}

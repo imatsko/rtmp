@@ -5,7 +5,6 @@ import (
 	"io"
 	"bytes"
 	"fmt"
-	"log"
 )
 
 var (
@@ -111,16 +110,8 @@ type MsgStream struct {
 	Msg map[int]*Msg
 	vts, ats int
 
-	meta AMFObj
 	id string
-	role int
-	stat int
-	app string
-	W,H int
 	strid int
-	extraA, extraV []byte
-	que chan *Msg
-	l *log.Logger
 }
 
 type Msg struct {

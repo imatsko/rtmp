@@ -78,7 +78,7 @@ func NewRtmpServer() *RtmpServer {
 	}
 }
 
-func (s *RtmpServer) AddClient(c io.ReadWriteCloser) {
+func (s *RtmpServer) ServeClient(c io.ReadWriteCloser) {
 	mr := NewMsgStream(c)
 	s.event <- eventS{id:E_NEW, mr:mr}
 	<- s.eventDone
@@ -121,7 +121,7 @@ func (s *RtmpServer) handleMeta(mr *MsgStream, obj AMFObj) {
 	mr.W = int(obj.obj["width"].f64)
 	mr.H = int(obj.obj["height"].f64)
 
-	l.Printf("stream %v: meta video %dx%d", mr, mr.W, mr.H)
+	l.Printf("stream %v: meta video %dx%d (%v)", mr, mr.W, mr.H, obj)
 }
 
 func (s *RtmpServer) handleCreateStream(mr *MsgStream, trans float64) {
@@ -475,11 +475,11 @@ func (s *RtmpServer)Loop() {
 			delete(idmap, e.mr.id)
 		case e.id == E_DATA && e.mr.stat == WAIT_EXTRA:
 			if len(e.mr.extraA) == 0 && e.m.typeid == MSG_AUDIO {
-				l.Printf("event %v: got aac config", e.mr)
+				l.Printf("event %v: extra got aac config", e.mr)
 				e.mr.extraA = e.m.data.Bytes()
 			}
 			if len(e.mr.extraV) == 0 && e.m.typeid == MSG_VIDEO {
-				l.Printf("event %v: got pps", e.mr)
+				l.Printf("event %v: extra got pps", e.mr)
 				e.mr.extraV = e.m.data.Bytes()
 			}
 			if len(e.mr.extraA) > 0 && len(e.mr.extraV) > 0 {
@@ -530,8 +530,17 @@ func SimpleServer() {
 			break
 		}
 		go func (c net.Conn) {
-			s.AddClient(c)
+			s.ServeClient(c)
 		} (c)
 	}
 }
+
+
+type RtmpConnection struct {
+
+
+}
+
+
+type RtmpPlayer struct {}
 

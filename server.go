@@ -21,7 +21,7 @@ type eventID int
 type eventS struct {
 	id int
 	m *Msg
-	peer *RtmpPeer
+	peer RtmpPeer
 }
 
 func (e eventS) String() string {
@@ -85,8 +85,8 @@ func (s *RtmpServer) ServeClient(c io.ReadWriteCloser) {
 }
 
 func (s *RtmpServer)Loop() {
-	idmap := map[string]*RtmpPeer{}
-	pubmap := map[string]*RtmpPeer{}
+	idmap := map[string]RtmpPeer{}
+	pubmap := map[string]RtmpPeer{}
 
 	for {
 		e := <- s.event
@@ -97,54 +97,44 @@ func (s *RtmpServer)Loop() {
 		}
 		switch e.id {
 		case E_NEW:
-			idmap[e.peer.id] = e.peer
+			idmap[e.peer.Id()] = e.peer
 		case E_PUBLISH:
-			if _, ok := pubmap[e.peer.app]; ok {
-				l.Printf("event %v: duplicated publish with %v app %s", e.peer, pubmap[e.peer.app], e.peer.app)
-				e.peer.mr.Close()
+			if _, ok := pubmap[e.peer.App()]; ok {
+				l.Printf("event %v: duplicated publish with %v app %s", e.peer, pubmap[e.peer.App()], e.peer.App())
+				e.peer.Close()
 			} else {
-				e.peer.role = PUBLISHER
-				pubmap[e.peer.app] = e.peer
+				e.peer.SetRole(PUBLISHER)
+				pubmap[e.peer.App()] = e.peer
 			}
 		case E_PLAY:
-			e.peer.role = PLAYER
-			e.peer.que = make(chan *Msg, 16)
+			e.peer.SetRole(PLAYER)
 			for _, peer := range idmap {
-				if peer.role == PUBLISHER && peer.app == e.peer.app && peer.stat == WAIT_DATA {
-					e.peer.W = peer.W
-					e.peer.H = peer.H
-					e.peer.extraA = peer.extraA
-					e.peer.extraV = peer.extraV
-					e.peer.meta = peer.meta
+				if peer.Role() == PUBLISHER && peer.App() == e.peer.App() && peer.DataReady(){
+					w, h, extraA, extraV, meta := peer.Meta()
+					e.peer.SetMeta(w, h, extraA, extraV, meta)
 				}
 			}
 		case E_CLOSE:
-			if e.peer.role == PUBLISHER {
-				delete(pubmap, e.peer.app)
+			if e.peer.Role() == PUBLISHER {
+				delete(pubmap, e.peer.App())
 				for _, peer := range idmap {
-					if peer.role == PLAYER && peer.app == e.peer.app {
-						ch := reflect.ValueOf(peer.que)
-						var m *Msg = nil
-						ch.TrySend(reflect.ValueOf(m))
+					if peer.Role() == PLAYER && peer.App() == e.peer.App() {
+						peer.StopSending()
 					}
 				}
 			}
-			delete(idmap, e.peer.id)
+			delete(idmap, e.peer.Id())
 		case E_EXTRA:
 			for _, peer := range idmap {
-				if peer.role == PLAYER && peer.app == e.peer.app {
-					peer.W = e.peer.W
-					peer.H = e.peer.H
-					peer.extraA = e.peer.extraA
-					peer.extraV = e.peer.extraV
-					peer.meta = e.peer.meta
+				if peer.Role() == PLAYER && peer.App() == e.peer.App() {
+					w, h, extraA, extraV, meta := e.peer.Meta()
+					peer.SetMeta(w, h, extraA, extraV, meta)
 				}
 			}
 		case E_DATA:
 			for _, peer := range idmap {
-				if peer.role == PLAYER && peer.app == e.peer.app {
-					ch := reflect.ValueOf(peer.que)
-					ok := ch.TrySend(reflect.ValueOf(e.m))
+				if peer.Role() == PLAYER && peer.App() == e.peer.App() {
+					ok := peer.Send(e.m)
 					if !ok {
 						l.Printf("event %v: send failed", e.peer)
 					} else {
@@ -157,36 +147,90 @@ func (s *RtmpServer)Loop() {
 	}
 }
 
+type RtmpPeer interface {
+	Id() string
+	App() string
+	SetApp(app string)
+	Meta() (w int, h int, extraA []byte, extraV []byte, meta AMFObj)
+	SetMeta(w int, h int, extraA []byte, extraV []byte, meta AMFObj)
+
+	Role() int
+	SetRole(int)
+
+	DataReady() bool
+	Close()
+	StopSending() bool
+	Send(m *Msg) bool
+}
 
 
-type RtmpPeer struct {
+func (p *RtmpPeerImpl) Id() string { return p.id }
+func (p *RtmpPeerImpl) App() string {return p.app}
+func (p *RtmpPeerImpl) SetApp(app string) {p.app = app}
+func (p *RtmpPeerImpl) Meta() (w int, h int, extraA []byte, extraV []byte, meta AMFObj) {
+	return p.W, p.H, p.extraA, p.extraV, p.meta
+}
+func (p *RtmpPeerImpl) SetMeta(w int, h int, extraA []byte, extraV []byte, meta AMFObj) {
+	p.W = w
+	p.H = h
+	p.extraA = extraA
+	p.extraV = extraV
+	p.meta = meta
+}
+
+func (p *RtmpPeerImpl) Role() int {return p.role}
+func (p *RtmpPeerImpl) SetRole(role int) {
+	p.role = role
+	if(role == PLAYER) {
+		p.que = make(chan *Msg, 16)
+	}
+}
+
+func (p *RtmpPeerImpl) DataReady() bool {return p.stat == WAIT_DATA}
+
+func (p *RtmpPeerImpl) Close() {
+	p.mr.Close()
+}
+
+func (p *RtmpPeerImpl) Send(m *Msg) bool {
+	ch := reflect.ValueOf(p.que)
+	return ch.TrySend(reflect.ValueOf(m))
+}
+
+func (p *RtmpPeerImpl) StopSending() bool {
+	return p.Send(nil)
+}
+
+
+type RtmpPeerImpl struct {
 	id string
 	s *RtmpServer
 	mr *MsgStream
 
-	meta AMFObj
 	role int
 	stat int
 	app string
 	W,H int
 	extraA, extraV []byte
+	meta AMFObj
+
 	que chan *Msg
 	l *log.Logger
 }
 
-func NewRtmpPeer(s *RtmpServer, c io.ReadWriteCloser) *RtmpPeer {
+func NewRtmpPeer(s *RtmpServer, c io.ReadWriteCloser) *RtmpPeerImpl {
 	mr := NewMsgStream(c)
-	peer := &RtmpPeer{id: mr.id, s: s, mr:mr}
+	peer := &RtmpPeerImpl{id: mr.id, s: s, mr:mr}
 	s.event <- eventS{id:E_NEW, peer: peer}
 	<- s.eventDone
 	return peer
 }
 
-func (p *RtmpPeer) String() string {
+func (p *RtmpPeerImpl) String() string {
 	return p.id
 }
 
-func (p *RtmpPeer) handleConnect(trans float64, app string) {
+func (p *RtmpPeerImpl) handleConnect(trans float64, app string) {
 
 	l.Printf("stream %v: connect: %s", p.mr, app)
 
@@ -216,7 +260,7 @@ func (p *RtmpPeer) handleConnect(trans float64, app string) {
 	})
 }
 
-func (p *RtmpPeer) handleMeta(obj AMFObj) {
+func (p *RtmpPeerImpl) handleMeta(obj AMFObj) {
 
 	p.meta = obj
 	p.W = int(obj.obj["width"].f64)
@@ -225,7 +269,7 @@ func (p *RtmpPeer) handleMeta(obj AMFObj) {
 	l.Printf("stream %v: meta video %dx%d (%v)", p.mr, p.W, p.H, obj)
 }
 
-func (p *RtmpPeer) handleCreateStream(trans float64) {
+func (p *RtmpPeerImpl) handleCreateStream(trans float64) {
 
 	l.Printf("stream %v: createStream", p.mr)
 
@@ -237,10 +281,10 @@ func (p *RtmpPeer) handleCreateStream(trans float64) {
 	})
 }
 
-func (p *RtmpPeer) handleGetStreamLength(trans float64) {
+func (p *RtmpPeerImpl) handleGetStreamLength(trans float64) {
 }
 
-func (p *RtmpPeer) handlePublish() {
+func (p *RtmpPeerImpl) handlePublish() {
 
 	l.Printf("stream %v: publish", p.mr)
 
@@ -301,7 +345,7 @@ func (m *testsrc) fetch() (err error) {
 	return
 }
 
-func (p *RtmpPeer) handlePlay(strid int) {
+func (p *RtmpPeerImpl) handlePlay(strid int) {
 
 	l.Printf("stream %v: play", p.mr)
 
@@ -467,7 +511,7 @@ func (p *RtmpPeer) handlePlay(strid int) {
 	}
 }
 
-func (p *RtmpPeer) serve() {
+func (p *RtmpPeerImpl) serve() {
 	defer func() {
 		if err := recover(); err != nil {
 			p.s.event <- eventS{id:E_CLOSE, peer: p}

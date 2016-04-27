@@ -13,6 +13,7 @@ import (
 	"time"
 	"strings"
 	_ "runtime/debug"
+	"io"
 )
 
 type eventID int
@@ -75,6 +76,13 @@ func NewRtmpServer() *RtmpServer {
 	event: make(chan eventS, 0),
 		eventDone: make(chan int, 0),
 	}
+}
+
+func (s *RtmpServer) AddClient(c io.ReadWriteCloser) {
+	mr := NewMsgStream(c)
+	s.event <- eventS{id:E_NEW, mr:mr}
+	<- s.eventDone
+	s.serve(mr)
 }
 
 func (s *RtmpServer) handleConnect(mr *MsgStream, trans float64, app string) {
@@ -419,7 +427,7 @@ func (s *RtmpServer) serve(mr *MsgStream) {
 	}
 }
 
-func (s *RtmpServer)listenEvent() {
+func (s *RtmpServer)Loop() {
 	idmap := map[string]*MsgStream{}
 	pubmap := map[string]*MsgStream{}
 
@@ -514,7 +522,7 @@ func SimpleServer() {
 
 	s := NewRtmpServer()
 
-	go s.listenEvent()
+	go s.Loop()
 	for {
 		c, err := ln.Accept()
 		if err != nil {
@@ -522,10 +530,7 @@ func SimpleServer() {
 			break
 		}
 		go func (c net.Conn) {
-			mr := NewMsgStream(c)
-			s.event <- eventS{id:E_NEW, mr:mr}
-			<- s.eventDone
-			s.serve(mr)
+			s.AddClient(c)
 		} (c)
 	}
 }

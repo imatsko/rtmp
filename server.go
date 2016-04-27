@@ -63,6 +63,7 @@ const (
 	E_PUBLISH
 	E_PLAY
 	E_DATA
+	E_EXTRA
 	E_CLOSE
 )
 
@@ -81,6 +82,79 @@ func NewRtmpServer() *RtmpServer {
 func (s *RtmpServer) ServeClient(c io.ReadWriteCloser) {
 	peer := NewRtmpPeer(s, c)
 	peer.serve()
+}
+
+func (s *RtmpServer)Loop() {
+	idmap := map[string]*MsgStream{}
+	pubmap := map[string]*MsgStream{}
+
+	for {
+		e := <- s.event
+		if e.id == E_DATA {
+			l.Printf("data %v: %v", e.mr, e)
+		} else {
+			l.Printf("event %v: %v", e.mr, e)
+		}
+		switch {
+		case e.id == E_NEW:
+			idmap[e.mr.id] = e.mr
+		case e.id == E_PUBLISH:
+			if _, ok := pubmap[e.mr.app]; ok {
+				l.Printf("event %v: duplicated publish with %v app %s", e.mr, pubmap[e.mr.app], e.mr.app)
+				e.mr.Close()
+			} else {
+				e.mr.role = PUBLISHER
+				pubmap[e.mr.app] = e.mr
+			}
+		case e.id == E_PLAY:
+			e.mr.role = PLAYER
+			e.mr.que = make(chan *Msg, 16)
+			for _, mr := range idmap {
+				if mr.role == PUBLISHER && mr.app == e.mr.app && mr.stat == WAIT_DATA {
+					e.mr.W = mr.W
+					e.mr.H = mr.H
+					e.mr.extraA = mr.extraA
+					e.mr.extraV = mr.extraV
+					e.mr.meta = mr.meta
+				}
+			}
+		case e.id == E_CLOSE:
+			if e.mr.role == PUBLISHER {
+				delete(pubmap, e.mr.app)
+				for _, mr := range idmap {
+					if mr.role == PLAYER && mr.app == e.mr.app {
+						ch := reflect.ValueOf(mr.que)
+						var m *Msg = nil
+						ch.TrySend(reflect.ValueOf(m))
+					}
+				}
+			}
+			delete(idmap, e.mr.id)
+		case e.id == E_EXTRA:
+			for _, mr := range idmap {
+				if mr.role == PLAYER && mr.app == e.mr.app {
+					mr.W = e.mr.W
+					mr.H = e.mr.H
+					mr.extraA = e.mr.extraA
+					mr.extraV = e.mr.extraV
+					mr.meta = e.mr.meta
+				}
+			}
+		case e.id == E_DATA && e.mr.stat == WAIT_DATA:
+			for _, mr := range idmap {
+				if mr.role == PLAYER && mr.app == e.mr.app {
+					ch := reflect.ValueOf(mr.que)
+					ok := ch.TrySend(reflect.ValueOf(e.m))
+					if !ok {
+						l.Printf("event %v: send failed", e.mr)
+					} else {
+						l.Printf("event %v: send ok", e.mr)
+					}
+				}
+			}
+		}
+		s.eventDone <- 1
+	}
 }
 
 
@@ -406,11 +480,29 @@ func (p *RtmpPeer) serve() {
 		l.Printf("stream %v: msg %v", p.mr, m)
 
 		if m.typeid == MSG_AUDIO || m.typeid == MSG_VIDEO {
-			p.mr.l.Printf("%d,%d", m.typeid, m.data.Len())
-			p.s.event <- eventS{id:E_DATA, mr:p.mr, m:m}
-			<- p.s.eventDone
-		}
+			if p.mr.stat == WAIT_EXTRA {
+				if len(p.mr.extraA) == 0 && m.typeid == MSG_AUDIO {
+			        p.mr.l.Printf("event %v: extra got aac config", p.mr)
+			        p.mr.extraA = m.data.Bytes()
+		        }
 
+				if len(p.mr.extraV) == 0 && m.typeid == MSG_VIDEO {
+					l.Printf("event %v: extra got pps", p.mr)
+					p.mr.extraV = m.data.Bytes()
+				}
+				if len(p.mr.extraA) > 0 && len(p.mr.extraV) > 0 {
+					l.Printf("event %v: got all extra", p.mr)
+					p.mr.stat = WAIT_DATA
+					p.s.event <- eventS{id:E_EXTRA, mr:p.mr}
+					<- p.s.eventDone
+				}
+
+			} else {
+				p.mr.l.Printf("%d,%d", m.typeid, m.data.Len())
+				p.s.event <- eventS{id:E_DATA, mr:p.mr, m:m}
+				<- p.s.eventDone
+			}
+		}
 		if m.typeid == MSG_AMF_CMD || m.typeid == MSG_AMF_META {
 			a := ReadAMF(m.data)
 			l.Printf("server: amfobj %v\n", a)
@@ -439,90 +531,6 @@ func (p *RtmpPeer) serve() {
 	}
 }
 
-func (s *RtmpServer)Loop() {
-	idmap := map[string]*MsgStream{}
-	pubmap := map[string]*MsgStream{}
-
-	for {
-		e := <- s.event
-		if e.id == E_DATA {
-			l.Printf("data %v: %v", e.mr, e)
-		} else {
-			l.Printf("event %v: %v", e.mr, e)
-		}
-		switch {
-		case e.id == E_NEW:
-			idmap[e.mr.id] = e.mr
-		case e.id == E_PUBLISH:
-			if _, ok := pubmap[e.mr.app]; ok {
-				l.Printf("event %v: duplicated publish with %v app %s", e.mr, pubmap[e.mr.app], e.mr.app)
-				e.mr.Close()
-			} else {
-				e.mr.role = PUBLISHER
-				pubmap[e.mr.app] = e.mr
-			}
-		case e.id == E_PLAY:
-			e.mr.role = PLAYER
-			e.mr.que = make(chan *Msg, 16)
-			for _, mr := range idmap {
-				if mr.role == PUBLISHER && mr.app == e.mr.app && mr.stat == WAIT_DATA {
-					e.mr.W = mr.W
-					e.mr.H = mr.H
-					e.mr.extraA = mr.extraA
-					e.mr.extraV = mr.extraV
-					e.mr.meta = mr.meta
-				}
-			}
-		case e.id == E_CLOSE:
-			if e.mr.role == PUBLISHER {
-				delete(pubmap, e.mr.app)
-				for _, mr := range idmap {
-					if mr.role == PLAYER && mr.app == e.mr.app {
-						ch := reflect.ValueOf(mr.que)
-						var m *Msg = nil
-						ch.TrySend(reflect.ValueOf(m))
-					}
-				}
-			}
-			delete(idmap, e.mr.id)
-		case e.id == E_DATA && e.mr.stat == WAIT_EXTRA:
-			if len(e.mr.extraA) == 0 && e.m.typeid == MSG_AUDIO {
-				l.Printf("event %v: extra got aac config", e.mr)
-				e.mr.extraA = e.m.data.Bytes()
-			}
-			if len(e.mr.extraV) == 0 && e.m.typeid == MSG_VIDEO {
-				l.Printf("event %v: extra got pps", e.mr)
-				e.mr.extraV = e.m.data.Bytes()
-			}
-			if len(e.mr.extraA) > 0 && len(e.mr.extraV) > 0 {
-				l.Printf("event %v: got all extra", e.mr)
-				e.mr.stat = WAIT_DATA
-				for _, mr := range idmap {
-					if mr.role == PLAYER && mr.app == e.mr.app {
-						mr.W = e.mr.W
-						mr.H = e.mr.H
-						mr.extraA = e.mr.extraA
-						mr.extraV = e.mr.extraV
-						mr.meta = e.mr.meta
-					}
-				}
-			}
-		case e.id == E_DATA && e.mr.stat == WAIT_DATA:
-			for _, mr := range idmap {
-				if mr.role == PLAYER && mr.app == e.mr.app {
-					ch := reflect.ValueOf(mr.que)
-					ok := ch.TrySend(reflect.ValueOf(e.m))
-					if !ok {
-						l.Printf("event %v: send failed", e.mr)
-					} else {
-						l.Printf("event %v: send ok", e.mr)
-					}
-				}
-			}
-		}
-		s.eventDone <- 1
-	}
-}
 
 func SimpleServer() {
 	l.Printf("server: simple server starts")

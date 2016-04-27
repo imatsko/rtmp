@@ -79,23 +79,35 @@ func NewRtmpServer() *RtmpServer {
 }
 
 func (s *RtmpServer) ServeClient(c io.ReadWriteCloser) {
+	peer := NewRtmpPeer(s, c)
+	peer.serve()
+}
+
+
+
+type RtmpPeer struct {
+	s *RtmpServer
+	mr *MsgStream
+}
+
+func NewRtmpPeer(s *RtmpServer, c io.ReadWriteCloser) *RtmpPeer {
 	mr := NewMsgStream(c)
 	s.event <- eventS{id:E_NEW, mr:mr}
 	<- s.eventDone
-	s.serve(mr)
+	return &RtmpPeer{s, mr}
 }
 
-func (s *RtmpServer) handleConnect(mr *MsgStream, trans float64, app string) {
+func (p *RtmpPeer) handleConnect(trans float64, app string) {
 
-	l.Printf("stream %v: connect: %s", mr, app)
+	l.Printf("stream %v: connect: %s", p.mr, app)
 
-	mr.app = app
+	p.mr.app = app
 
-	mr.WriteMsg32(2, MSG_ACK_SIZE, 0, 5000000)
-	mr.WriteMsg32(2, MSG_BANDWIDTH, 0, 5000000)
-	mr.WriteMsg32(2, MSG_CHUNK_SIZE, 0, 128)
+	p.mr.WriteMsg32(2, MSG_ACK_SIZE, 0, 5000000)
+	p.mr.WriteMsg32(2, MSG_BANDWIDTH, 0, 5000000)
+	p.mr.WriteMsg32(2, MSG_CHUNK_SIZE, 0, 128)
 
-	mr.WriteAMFCmd(3, 0, []AMFObj {
+	p.mr.WriteAMFCmd(3, 0, []AMFObj {
 		AMFObj { atype : AMF_STRING, str : "_result", },
 		AMFObj { atype : AMF_NUMBER, f64 : trans, },
 		AMFObj { atype : AMF_OBJECT,
@@ -115,20 +127,20 @@ func (s *RtmpServer) handleConnect(mr *MsgStream, trans float64, app string) {
 	})
 }
 
-func (s *RtmpServer) handleMeta(mr *MsgStream, obj AMFObj) {
+func (p *RtmpPeer) handleMeta(obj AMFObj) {
 
-	mr.meta = obj
-	mr.W = int(obj.obj["width"].f64)
-	mr.H = int(obj.obj["height"].f64)
+	p.mr.meta = obj
+	p.mr.W = int(obj.obj["width"].f64)
+	p.mr.H = int(obj.obj["height"].f64)
 
-	l.Printf("stream %v: meta video %dx%d (%v)", mr, mr.W, mr.H, obj)
+	l.Printf("stream %v: meta video %dx%d (%v)", p.mr, p.mr.W, p.mr.H, obj)
 }
 
-func (s *RtmpServer) handleCreateStream(mr *MsgStream, trans float64) {
+func (p *RtmpPeer) handleCreateStream(trans float64) {
 
-	l.Printf("stream %v: createStream", mr)
+	l.Printf("stream %v: createStream", p.mr)
 
-	mr.WriteAMFCmd(3, 0, []AMFObj {
+	p.mr.WriteAMFCmd(3, 0, []AMFObj {
 		AMFObj { atype : AMF_STRING, str : "_result", },
 		AMFObj { atype : AMF_NUMBER, f64 : trans, },
 		AMFObj { atype : AMF_NULL, },
@@ -136,14 +148,14 @@ func (s *RtmpServer) handleCreateStream(mr *MsgStream, trans float64) {
 	})
 }
 
-func (s *RtmpServer) handleGetStreamLength(mr *MsgStream, trans float64) {
+func (p *RtmpPeer) handleGetStreamLength(trans float64) {
 }
 
-func (s *RtmpServer) handlePublish(mr *MsgStream) {
+func (p *RtmpPeer) handlePublish() {
 
-	l.Printf("stream %v: publish", mr)
+	l.Printf("stream %v: publish", p.mr)
 
-	mr.WriteAMFCmd(3, 0, []AMFObj {
+	p.mr.WriteAMFCmd(3, 0, []AMFObj {
 		AMFObj { atype : AMF_STRING, str : "onStatus", },
 		AMFObj { atype : AMF_NUMBER, f64 : 0, },
 		AMFObj { atype : AMF_NULL, },
@@ -156,8 +168,8 @@ func (s *RtmpServer) handlePublish(mr *MsgStream) {
 		},
 	})
 
-	s.event <- eventS{id:E_PUBLISH, mr:mr}
-	<- s.eventDone
+	p.s.event <- eventS{id:E_PUBLISH, mr:p.mr}
+	<- p.s.eventDone
 }
 
 type testsrc struct {
@@ -200,21 +212,21 @@ func (m *testsrc) fetch() (err error) {
 	return
 }
 
-func (s *RtmpServer) handlePlay(mr *MsgStream, strid int) {
+func (p *RtmpPeer) handlePlay(strid int) {
 
-	l.Printf("stream %v: play", mr)
+	l.Printf("stream %v: play", p.mr)
 
 	var tsrc *testsrc
 	//tsrc = tsrcNew()
 
 	if tsrc == nil {
-		s.event <- eventS{id:E_PLAY, mr:mr}
-		<- s.eventDone
+		p.s.event <- eventS{id:E_PLAY, mr:p.mr}
+		<- p.s.eventDone
 	} else {
-		l.Printf("stream %v: test play data in %s", mr, tsrc.dir)
-		mr.W = tsrc.w
-		mr.H = tsrc.h
-		l.Printf("stream %v: test video %dx%d", mr, mr.W, mr.H)
+		l.Printf("stream %v: test play data in %s", p.mr, tsrc.dir)
+		p.mr.W = tsrc.w
+		p.mr.H = tsrc.h
+		l.Printf("stream %v: test video %dx%d", p.mr, p.mr.W, p.mr.H)
 	}
 
 	begin := func () {
@@ -222,9 +234,9 @@ func (s *RtmpServer) handlePlay(mr *MsgStream, strid int) {
 		var b bytes.Buffer
 		WriteInt(&b, 0, 2)
 		WriteInt(&b, strid, 4)
-		mr.WriteMsg(0, 2, MSG_USER, 0, 0, b.Bytes()) // stream begin 1
+		p.mr.WriteMsg(0, 2, MSG_USER, 0, 0, b.Bytes()) // stream begin 1
 
-		mr.WriteAMFCmd(5, strid, []AMFObj {
+		p.mr.WriteAMFCmd(5, strid, []AMFObj {
 			AMFObj { atype : AMF_STRING, str : "onStatus", },
 			AMFObj { atype : AMF_NUMBER, f64 : 0, },
 			AMFObj { atype : AMF_NULL, },
@@ -237,20 +249,20 @@ func (s *RtmpServer) handlePlay(mr *MsgStream, strid int) {
 			},
 		})
 
-		l.Printf("stream %v: begin: video %dx%d", mr, mr.W, mr.H)
+		l.Printf("stream %v: begin: video %dx%d", p.mr, p.mr.W, p.mr.H)
 
-		mr.WriteAMFMeta(5, strid, []AMFObj {
+		p.mr.WriteAMFMeta(5, strid, []AMFObj {
 			AMFObj { atype : AMF_STRING, str : "|RtmpSampleAccess", },
 			AMFObj { atype : AMF_BOOLEAN, i: 1, },
 			AMFObj { atype : AMF_BOOLEAN, i: 1, },
 		})
 
-		mr.meta.obj["Server"] = AMFObj { atype : AMF_STRING, str : "Golang Rtmp Server", }
-		mr.meta.atype = AMF_OBJECT
-		l.Printf("stream %v: %v", mr, mr.meta)
-		mr.WriteAMFMeta(5, strid, []AMFObj {
+		p.mr.meta.obj["Server"] = AMFObj { atype : AMF_STRING, str : "Golang Rtmp Server", }
+		p.mr.meta.atype = AMF_OBJECT
+		l.Printf("stream %v: %v", p.mr, p.mr.meta)
+		p.mr.WriteAMFMeta(5, strid, []AMFObj {
 			AMFObj { atype : AMF_STRING, str : "onMetaData", },
-			mr.meta,
+			p.mr.meta,
 			/*
 			AMFObj { atype : AMF_OBJECT,
 				obj : map[string] AMFObj {
@@ -273,14 +285,14 @@ func (s *RtmpServer) handlePlay(mr *MsgStream, strid int) {
 
 	end := func () {
 
-		l.Printf("stream %v: end", mr)
+		l.Printf("stream %v: end", p.mr)
 
 		var b bytes.Buffer
 		WriteInt(&b, 1, 2)
 		WriteInt(&b, strid, 4)
-		mr.WriteMsg(0, 2, MSG_USER, 0, 0, b.Bytes()) // stream eof 1
+		p.mr.WriteMsg(0, 2, MSG_USER, 0, 0, b.Bytes()) // stream eof 1
 
-		mr.WriteAMFCmd(5, strid, []AMFObj {
+		p.mr.WriteAMFCmd(5, strid, []AMFObj {
 			AMFObj { atype : AMF_STRING, str : "onStatus", },
 			AMFObj { atype : AMF_NUMBER, f64 : 0, },
 			AMFObj { atype : AMF_NULL, },
@@ -300,7 +312,7 @@ func (s *RtmpServer) handlePlay(mr *MsgStream, strid int) {
 			nr := 0
 
 			for {
-				m := <-mr.que
+				m := <-p.mr.que
 				if m == nil {
 					break
 				}
@@ -309,16 +321,16 @@ func (s *RtmpServer) handlePlay(mr *MsgStream, strid int) {
 				//}
 				if nr == 0 {
 					begin()
-					l.Printf("stream %v: extra size %d %d", mr, len(mr.extraA), len(mr.extraV))
-					mr.WriteAAC(strid, 0, mr.extraA[2:])
-					mr.WritePPS(strid, 0, mr.extraV[5:])
+					l.Printf("stream %v: extra size %d %d", p.mr, len(p.mr.extraA), len(p.mr.extraV))
+					p.mr.WriteAAC(strid, 0, p.mr.extraA[2:])
+					p.mr.WritePPS(strid, 0, p.mr.extraV[5:])
 				}
-				l.Printf("data %v: got %v curts %v", mr, m, m.curts)
+				l.Printf("data %v: got %v curts %v", p.mr, m, m.curts)
 				switch m.typeid {
 				case MSG_AUDIO:
-					mr.WriteAudio(strid, m.curts, m.data.Bytes()[2:])
+					p.mr.WriteAudio(strid, m.curts, m.data.Bytes()[2:])
 				case MSG_VIDEO:
-					mr.WriteVideo(strid, m.curts, m.key, m.data.Bytes()[5:])
+					p.mr.WriteVideo(strid, m.curts, m.key, m.data.Bytes()[5:])
 				}
 				nr++
 			}
@@ -343,15 +355,15 @@ func (s *RtmpServer) handlePlay(mr *MsgStream, strid int) {
 			switch tsrc.codec {
 			case "h264":
 				if tsrc.idx == 0 {
-					mr.WritePPS(strid, 0, tsrc.data)
+					p.mr.WritePPS(strid, 0, tsrc.data)
 				} else {
-					mr.WriteVideo(strid, tsrc.ts, tsrc.key, tsrc.data)
+					p.mr.WriteVideo(strid, tsrc.ts, tsrc.key, tsrc.data)
 				}
 			case "aac":
 				if tsrc.idx == 0 {
-					mr.WriteAAC(strid, 0, tsrc.data)
+					p.mr.WriteAAC(strid, 0, tsrc.data)
 				} else {
-					mr.WriteAudio(strid, tsrc.ts, tsrc.data)
+					p.mr.WriteAudio(strid, tsrc.ts, tsrc.data)
 				}
 			}
 			dur := time.Since(starttm).Nanoseconds()
@@ -359,44 +371,44 @@ func (s *RtmpServer) handlePlay(mr *MsgStream, strid int) {
 			if diff > 0 {
 				time.Sleep(time.Duration(diff)*time.Millisecond)
 			}
-			l.Printf("data %v: ts %v dur %v diff %v", mr, tsrc.ts, int(dur/1000000), diff)
+			l.Printf("data %v: ts %v dur %v diff %v", p.mr, tsrc.ts, int(dur/1000000), diff)
 			ll.Printf("#%d %d,%s,%d %d", k, tsrc.ts, tsrc.codec, tsrc.idx, len(tsrc.data))
 			k++
 		}
 	}
 }
 
-func (s *RtmpServer) serve(mr *MsgStream) {
+func (p *RtmpPeer) serve() {
 	defer func() {
 		if err := recover(); err != nil {
-			s.event <- eventS{id:E_CLOSE, mr:mr}
-			<- s.eventDone
-			l.Printf("stream %v: closed %v", mr, err)
+			p.s.event <- eventS{id:E_CLOSE, mr:p.mr}
+			<- p.s.eventDone
+			l.Printf("stream %v: closed %v", p.mr, err)
 			//if err != "EOF" {
 			//	l.Printf("stream %v: %v", mr, string(debug.Stack()))
 			//}
 		}
 	}()
 
-	if err := handShake(mr.r); err != nil {
+	if err := handShake(p.mr.r); err != nil {
 		panic(err)
 	}
 
 	f, _ := os.Create("/tmp/pub.log")
-	mr.l = log.New(f, "", 0)
+	p.mr.l = log.New(f, "", 0)
 
 	for {
-		m := mr.ReadMsg()
+		m := p.mr.ReadMsg()
 		if m == nil {
 			continue
 		}
 
-		l.Printf("stream %v: msg %v", mr, m)
+		l.Printf("stream %v: msg %v", p.mr, m)
 
 		if m.typeid == MSG_AUDIO || m.typeid == MSG_VIDEO {
-			mr.l.Printf("%d,%d", m.typeid, m.data.Len())
-			s.event <- eventS{id:E_DATA, mr:mr, m:m}
-			<- s.eventDone
+			p.mr.l.Printf("%d,%d", m.typeid, m.data.Len())
+			p.s.event <- eventS{id:E_DATA, mr:p.mr, m:m}
+			<- p.s.eventDone
 		}
 
 		if m.typeid == MSG_AMF_CMD || m.typeid == MSG_AMF_META {
@@ -409,19 +421,19 @@ func (s *RtmpServer) serve(mr *MsgStream) {
 				if _, ok := a3.obj["app"]; !ok || a3.obj["app"].str == "" {
 					panic("connect: app not found")
 				}
-				s.handleConnect(mr, a2.f64, a3.obj["app"].str)
+				p.handleConnect(a2.f64, a3.obj["app"].str)
 			case "@setDataFrame":
 				ReadAMF(m.data)
 				a3 := ReadAMF(m.data)
-				s.handleMeta(mr, a3)
-				l.Printf("stream %v: setdataframe", mr)
+				p.handleMeta(a3)
+				l.Printf("stream %v: setdataframe", p.mr)
 			case "createStream":
 				a2 := ReadAMF(m.data)
-				s.handleCreateStream(mr, a2.f64)
+				p.handleCreateStream(a2.f64)
 			case "publish":
-				s.handlePublish(mr)
+				p.handlePublish()
 			case "play":
-				s.handlePlay(mr, m.strid)
+				p.handlePlay(m.strid)
 			}
 		}
 	}
@@ -536,10 +548,6 @@ func SimpleServer() {
 }
 
 
-type RtmpConnection struct {
-
-
-}
 
 
 type RtmpPlayer struct {}

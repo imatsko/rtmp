@@ -6,25 +6,26 @@ import (
 	"log"
 	"os"
 	"fmt"
-	"strings"
+	_ "strings"
 )
 
 type logger int
 
 func (l logger) Printf(format string, v ...interface{}) {
 	str := fmt.Sprintf(format, v...)
-	switch {
-	case strings.HasPrefix(str, "server") && l >= 1,
-			 strings.HasPrefix(str, "stream") && l >= 1,
-			 strings.HasPrefix(str, "event") && l >= 1,
-			 strings.HasPrefix(str, "data") && l >= 1,
-			 strings.HasPrefix(str, "msg") && l >= 2:
-		l2.Println(str)
-	default:
-		if l >= 1 {
-			l2.Println(str)
-		}
-	}
+	fmt.Println(str)
+	//switch {
+	//case strings.HasPrefix(str, "server") && l >= 1,
+	//		 strings.HasPrefix(str, "stream") && l >= 1,
+	//		 strings.HasPrefix(str, "event") && l >= 1,
+	//		 strings.HasPrefix(str, "data") && l >= 1,
+	//		 strings.HasPrefix(str, "msg") && l >= 2:
+	//	l2.Println(str)
+	//default:
+	//	if l >= 1 {
+	//		l2.Println(str)
+	//	}
+	//}
 }
 
 var (

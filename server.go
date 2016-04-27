@@ -351,7 +351,6 @@ func handlePlay(mr *MsgStream, strid int) {
 }
 
 func serve(mr *MsgStream) {
-
 	defer func() {
 		if err := recover(); err != nil {
 			event <- eventS{id:E_CLOSE, mr:mr}
@@ -363,10 +362,12 @@ func serve(mr *MsgStream) {
 		}
 	}()
 
-	handShake(mr.r)
+	if err := handShake(mr.r); err != nil {
+		panic(err)
+	}
 
-//	f, _ := os.Create("/tmp/pub.log")
-//	mr.l = log.New(f, "", 0)
+	f, _ := os.Create("/tmp/pub.log")
+	mr.l = log.New(f, "", 0)
 
 	for {
 		m := mr.ReadMsg()
@@ -374,17 +375,17 @@ func serve(mr *MsgStream) {
 			continue
 		}
 
-		//l.Printf("stream %v: msg %v", mr, m)
+		l.Printf("stream %v: msg %v", mr, m)
 
 		if m.typeid == MSG_AUDIO || m.typeid == MSG_VIDEO {
-//			mr.l.Printf("%d,%d", m.typeid, m.data.Len())
+			mr.l.Printf("%d,%d", m.typeid, m.data.Len())
 			event <- eventS{id:E_DATA, mr:mr, m:m}
 			<-eventDone
 		}
 
 		if m.typeid == MSG_AMF_CMD || m.typeid == MSG_AMF_META {
 			a := ReadAMF(m.data)
-			//l.Printf("server: amfobj %v\n", a)
+			l.Printf("server: amfobj %v\n", a)
 			switch a.str {
 			case "connect":
 				a2 := ReadAMF(m.data)

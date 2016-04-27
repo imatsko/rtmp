@@ -15,18 +15,13 @@ import (
 	_ "runtime/debug"
 )
 
-var (
-	event = make(chan eventS, 0)
-	eventDone = make(chan int, 0)
-)
+type eventID int
 
 type eventS struct {
 	id int
 	mr *MsgStream
 	m *Msg
 }
-
-type eventID int
 
 func (e eventS) String() string {
 	switch e.id {
@@ -49,6 +44,7 @@ func (e eventS) String() string {
 	return ""
 }
 
+
 /*
 server:
  connect
@@ -69,7 +65,19 @@ const (
 	E_CLOSE
 )
 
-func handleConnect(mr *MsgStream, trans float64, app string) {
+type RtmpServer struct {
+	event chan eventS
+	eventDone chan int
+}
+
+func NewRtmpServer() *RtmpServer {
+	return &RtmpServer{
+	event: make(chan eventS, 0),
+		eventDone: make(chan int, 0),
+	}
+}
+
+func (s *RtmpServer) handleConnect(mr *MsgStream, trans float64, app string) {
 
 	l.Printf("stream %v: connect: %s", mr, app)
 
@@ -99,7 +107,7 @@ func handleConnect(mr *MsgStream, trans float64, app string) {
 	})
 }
 
-func handleMeta(mr *MsgStream, obj AMFObj) {
+func (s *RtmpServer) handleMeta(mr *MsgStream, obj AMFObj) {
 
 	mr.meta = obj
 	mr.W = int(obj.obj["width"].f64)
@@ -108,7 +116,7 @@ func handleMeta(mr *MsgStream, obj AMFObj) {
 	l.Printf("stream %v: meta video %dx%d", mr, mr.W, mr.H)
 }
 
-func handleCreateStream(mr *MsgStream, trans float64) {
+func (s *RtmpServer) handleCreateStream(mr *MsgStream, trans float64) {
 
 	l.Printf("stream %v: createStream", mr)
 
@@ -120,10 +128,10 @@ func handleCreateStream(mr *MsgStream, trans float64) {
 	})
 }
 
-func handleGetStreamLength(mr *MsgStream, trans float64) {
+func (s *RtmpServer) handleGetStreamLength(mr *MsgStream, trans float64) {
 }
 
-func handlePublish(mr *MsgStream) {
+func (s *RtmpServer) handlePublish(mr *MsgStream) {
 
 	l.Printf("stream %v: publish", mr)
 
@@ -140,8 +148,8 @@ func handlePublish(mr *MsgStream) {
 		},
 	})
 
-	event <- eventS{id:E_PUBLISH, mr:mr}
-	<-eventDone
+	s.event <- eventS{id:E_PUBLISH, mr:mr}
+	<- s.eventDone
 }
 
 type testsrc struct {
@@ -184,7 +192,7 @@ func (m *testsrc) fetch() (err error) {
 	return
 }
 
-func handlePlay(mr *MsgStream, strid int) {
+func (s *RtmpServer) handlePlay(mr *MsgStream, strid int) {
 
 	l.Printf("stream %v: play", mr)
 
@@ -192,8 +200,8 @@ func handlePlay(mr *MsgStream, strid int) {
 	//tsrc = tsrcNew()
 
 	if tsrc == nil {
-		event <- eventS{id:E_PLAY, mr:mr}
-		<-eventDone
+		s.event <- eventS{id:E_PLAY, mr:mr}
+		<- s.eventDone
 	} else {
 		l.Printf("stream %v: test play data in %s", mr, tsrc.dir)
 		mr.W = tsrc.w
@@ -350,11 +358,11 @@ func handlePlay(mr *MsgStream, strid int) {
 	}
 }
 
-func serve(mr *MsgStream) {
+func (s *RtmpServer) serve(mr *MsgStream) {
 	defer func() {
 		if err := recover(); err != nil {
-			event <- eventS{id:E_CLOSE, mr:mr}
-			<-eventDone
+			s.event <- eventS{id:E_CLOSE, mr:mr}
+			<- s.eventDone
 			l.Printf("stream %v: closed %v", mr, err)
 			//if err != "EOF" {
 			//	l.Printf("stream %v: %v", mr, string(debug.Stack()))
@@ -379,8 +387,8 @@ func serve(mr *MsgStream) {
 
 		if m.typeid == MSG_AUDIO || m.typeid == MSG_VIDEO {
 			mr.l.Printf("%d,%d", m.typeid, m.data.Len())
-			event <- eventS{id:E_DATA, mr:mr, m:m}
-			<-eventDone
+			s.event <- eventS{id:E_DATA, mr:mr, m:m}
+			<- s.eventDone
 		}
 
 		if m.typeid == MSG_AMF_CMD || m.typeid == MSG_AMF_META {
@@ -393,30 +401,30 @@ func serve(mr *MsgStream) {
 				if _, ok := a3.obj["app"]; !ok || a3.obj["app"].str == "" {
 					panic("connect: app not found")
 				}
-				handleConnect(mr, a2.f64, a3.obj["app"].str)
+				s.handleConnect(mr, a2.f64, a3.obj["app"].str)
 			case "@setDataFrame":
 				ReadAMF(m.data)
 				a3 := ReadAMF(m.data)
-				handleMeta(mr, a3)
+				s.handleMeta(mr, a3)
 				l.Printf("stream %v: setdataframe", mr)
 			case "createStream":
 				a2 := ReadAMF(m.data)
-				handleCreateStream(mr, a2.f64)
+				s.handleCreateStream(mr, a2.f64)
 			case "publish":
-				handlePublish(mr)
+				s.handlePublish(mr)
 			case "play":
-				handlePlay(mr, m.strid)
+				s.handlePlay(mr, m.strid)
 			}
 		}
 	}
 }
 
-func listenEvent() {
+func (s *RtmpServer)listenEvent() {
 	idmap := map[string]*MsgStream{}
 	pubmap := map[string]*MsgStream{}
 
 	for {
-		e := <-event
+		e := <- s.event
 		if e.id == E_DATA {
 			l.Printf("data %v: %v", e.mr, e)
 		} else {
@@ -492,7 +500,7 @@ func listenEvent() {
 				}
 			}
 		}
-		eventDone <- 1
+		s.eventDone <- 1
 	}
 }
 
@@ -503,7 +511,10 @@ func SimpleServer() {
 		l.Printf("server: error: listen 1935 %s\n", err)
 		return
 	}
-	go listenEvent()
+
+	s := NewRtmpServer()
+
+	go s.listenEvent()
 	for {
 		c, err := ln.Accept()
 		if err != nil {
@@ -512,9 +523,9 @@ func SimpleServer() {
 		}
 		go func (c net.Conn) {
 			mr := NewMsgStream(c)
-			event <- eventS{id:E_NEW, mr:mr}
-			<-eventDone
-			serve(mr)
+			s.event <- eventS{id:E_NEW, mr:mr}
+			<- s.eventDone
+			s.serve(mr)
 		} (c)
 	}
 }

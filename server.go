@@ -14,6 +14,8 @@ import (
 	"strings"
 	_ "runtime/debug"
 	"io"
+	"errors"
+	"encoding/gob"
 )
 
 type eventID int
@@ -79,11 +81,6 @@ func NewRtmpServer() *RtmpServer {
 	}
 }
 
-func (s *RtmpServer) ServeClient(c io.ReadWriteCloser) {
-	peer := NewRtmpPeer(s, c)
-	peer.serve()
-}
-
 func (s *RtmpServer)Loop() {
 	idmap := map[string]RtmpPeer{}
 	pubmap := map[string]RtmpPeer{}
@@ -101,15 +98,17 @@ func (s *RtmpServer)Loop() {
 		case E_PUBLISH:
 			if _, ok := pubmap[e.peer.App()]; ok {
 				l.Printf("event %v: duplicated publish with %v app %s", e.peer, pubmap[e.peer.App()], e.peer.App())
-				e.peer.Close()
+				e.peer.Stop()
 			} else {
 				e.peer.SetRole(PUBLISHER)
+				fmt.Printf("DUMP PUB: '%s'", e.peer.App())
 				pubmap[e.peer.App()] = e.peer
 			}
 		case E_PLAY:
 			e.peer.SetRole(PLAYER)
 			for _, peer := range idmap {
 				if peer.Role() == PUBLISHER && peer.App() == e.peer.App() && peer.DataReady(){
+
 					w, h, extraA, extraV, meta := peer.Meta()
 					e.peer.SetMeta(w, h, extraA, extraV, meta)
 				}
@@ -119,13 +118,14 @@ func (s *RtmpServer)Loop() {
 				delete(pubmap, e.peer.App())
 				for _, peer := range idmap {
 					if peer.Role() == PLAYER && peer.App() == e.peer.App() {
-						peer.StopSending()
+						peer.Stop()
 					}
 				}
 			}
 			delete(idmap, e.peer.Id())
 		case E_EXTRA:
 			for _, peer := range idmap {
+				fmt.Printf("DUMP peer %+v chk %v\n", peer, peer.Role() == PLAYER && peer.App() == e.peer.App())
 				if peer.Role() == PLAYER && peer.App() == e.peer.App() {
 					w, h, extraA, extraV, meta := e.peer.Meta()
 					peer.SetMeta(w, h, extraA, extraV, meta)
@@ -134,6 +134,7 @@ func (s *RtmpServer)Loop() {
 		case E_DATA:
 			for _, peer := range idmap {
 				if peer.Role() == PLAYER && peer.App() == e.peer.App() {
+					fmt.Printf("DUMP send %v\n", e.m)
 					ok := peer.Send(e.m)
 					if !ok {
 						l.Printf("event %v: send failed", e.peer)
@@ -158,15 +159,17 @@ type RtmpPeer interface {
 	SetRole(int)
 
 	DataReady() bool
-	Close()
-	StopSending() bool
+	Stop() bool
 	Send(m *Msg) bool
 }
 
 
 func (p *RtmpPeerImpl) Id() string { return p.id }
 func (p *RtmpPeerImpl) App() string {return p.app}
-func (p *RtmpPeerImpl) SetApp(app string) {p.app = app}
+func (p *RtmpPeerImpl) SetApp(app string) {
+	fmt.Printf("APP: %s\n", app)
+	p.app = app
+}
 func (p *RtmpPeerImpl) Meta() (w int, h int, extraA []byte, extraV []byte, meta AMFObj) {
 	return p.W, p.H, p.extraA, p.extraV, p.meta
 }
@@ -188,17 +191,18 @@ func (p *RtmpPeerImpl) SetRole(role int) {
 
 func (p *RtmpPeerImpl) DataReady() bool {return p.stat == WAIT_DATA}
 
-func (p *RtmpPeerImpl) Close() {
-	p.mr.Close()
+func (p *RtmpPeerImpl) Stop() bool {
+	if p.role == PUBLISHER {
+		p.mr.Close()
+		return true
+	} else {
+		return p.Send(nil)
+	}
 }
 
 func (p *RtmpPeerImpl) Send(m *Msg) bool {
 	ch := reflect.ValueOf(p.que)
 	return ch.TrySend(reflect.ValueOf(m))
-}
-
-func (p *RtmpPeerImpl) StopSending() bool {
-	return p.Send(nil)
 }
 
 
@@ -227,7 +231,7 @@ func NewRtmpPeer(s *RtmpServer, c io.ReadWriteCloser) *RtmpPeerImpl {
 }
 
 func (p *RtmpPeerImpl) String() string {
-	return p.id
+	return p.Id()
 }
 
 func (p *RtmpPeerImpl) handleConnect(trans float64, app string) {
@@ -511,7 +515,7 @@ func (p *RtmpPeerImpl) handlePlay(strid int) {
 	}
 }
 
-func (p *RtmpPeerImpl) serve() {
+func (p *RtmpPeerImpl) Serve() {
 	defer func() {
 		if err := recover(); err != nil {
 			p.s.event <- eventS{id:E_CLOSE, peer: p}
@@ -591,6 +595,144 @@ func (p *RtmpPeerImpl) serve() {
 }
 
 
+func (p *RtmpPeerPlayerDumper) String() string {
+	return p.Id()
+}
+func (p *RtmpPeerPlayerDumper) Id() string { return p.id }
+func (p *RtmpPeerPlayerDumper) App() string {return p.app}
+func (p *RtmpPeerPlayerDumper) SetApp(app string) {p.app = app}
+func (p *RtmpPeerPlayerDumper) Meta() (w int, h int, extraA []byte, extraV []byte, meta AMFObj) {
+	return p.W, p.H, p.extraA, p.extraV, p.meta
+}
+func (p *RtmpPeerPlayerDumper) SetMeta(w int, h int, extraA []byte, extraV []byte, meta AMFObj) {
+	p.W = w
+	p.H = h
+	p.extraA = extraA
+	p.extraV = extraV
+	p.meta = meta
+	p.dumpMeta()
+}
+
+func (p *RtmpPeerPlayerDumper) Role() int {return p.role}
+func (p *RtmpPeerPlayerDumper) SetRole(role int) {
+	if(role != PLAYER) {
+		panic(errors.New("Player only"))
+	}
+}
+
+func (p *RtmpPeerPlayerDumper) DataReady() bool {return false}
+
+func (p *RtmpPeerPlayerDumper) Send(m *Msg) bool {
+	fmt.Printf("DUMP send %+v", m)
+	ch := reflect.ValueOf(p.que)
+	return ch.TrySend(reflect.ValueOf(m))
+}
+
+func (p *RtmpPeerPlayerDumper) Stop() bool {
+	return p.Send(nil)
+}
+
+func (p *RtmpPeerPlayerDumper) dumpMeta() {
+
+	fmt.Println("DUMP meta")
+
+	size_f, _ := os.Create(p.dir+"/size")
+	defer size_f.Close()
+	fmt.Fprintf(size_f, "%dx%d", p.W, p.H)
+
+	ioutil.WriteFile(p.dir + "/extraA", p.extraA, 0644)
+	ioutil.WriteFile(p.dir + "/extraV", p.extraA, 0644)
+
+
+	meta_f, _ := os.Create(p.dir+"/meta")
+	defer meta_f.Close()
+	meta_enc := gob.NewEncoder(meta_f)
+	meta_enc.Encode(p.meta)
+}
+
+func (p *RtmpPeerPlayerDumper) dumpVideo(nr int, ts int, key bool, data []byte) {
+	fmt.Println("DUMP audio")
+
+	name := fmt.Sprintf("%s/h264-%d-%d", p.dir, nr, ts)
+	if key { name = name+"-k" }
+	ioutil.WriteFile(name, data, 0644)
+}
+func (p *RtmpPeerPlayerDumper) dumpAudio(nr int, ts int, data []byte) {
+	fmt.Println("DUMP video")
+
+	name := fmt.Sprintf("%s/aac-%d-%d", p.dir, nr, ts)
+	ioutil.WriteFile(name, data, 0644)
+}
+
+type RtmpPeerPlayerDumper struct {
+	id string
+
+	s *RtmpServer
+	que chan *Msg
+
+	dir string
+
+	role int
+	stat int
+	app string
+	W,H int
+	extraA, extraV []byte
+    meta AMFObj
+}
+
+func NewPlayerDumper(s *RtmpServer, dir string, app string) *RtmpPeerPlayerDumper {
+	dumper := new(RtmpPeerPlayerDumper)
+	dumper.s = s
+	dumper.dir = dir
+	dumper.app = app
+	dumper.role = PLAYER
+	fmt.Printf("DUMP app '%s'\n", app)
+	dumper.id = fmt.Sprintf("%s: %s", app, dir)
+	dumper.que = make(chan *Msg, 16)
+
+	return dumper
+}
+
+func (p *RtmpPeerPlayerDumper) Serve() {
+	defer func() {
+		p.s.event <- eventS{id:E_CLOSE, peer: p}
+		<- p.s.eventDone
+		if err := recover(); err != nil {
+			l.Printf("DUMP stream %v: closed %v", p, err)
+			//if err != "EOF" {
+			//	l.Printf("stream %v: %v", mr, string(debug.Stack()))
+			//}
+		}
+	}()
+
+	p.s.event <- eventS{id:E_NEW, peer: p}
+	<- p.s.eventDone
+
+	p.s.event <- eventS{id:E_PLAY, peer: p}
+	<- p.s.eventDone
+
+	fmt.Println("Start DUMP")
+
+	nr := 0
+	for {
+		m := <- p.que
+		fmt.Printf("DUMP got msg %+v\n", m)
+		if m == nil {
+			break
+		}
+		l.Printf("DUMP data %v: got %v curts %v", p, m, m.curts)
+		switch m.typeid {
+			case MSG_AUDIO:
+				p.dumpAudio(nr, m.curts, m.data.Bytes())
+			case MSG_VIDEO:
+				p.dumpVideo(nr, m.curts, m.key, m.data.Bytes())
+			}
+			nr++
+	}
+
+}
+
+
 func SimpleServer() {
 	l.Printf("server: simple server starts")
 	ln, err := net.Listen("tcp", ":1935")
@@ -601,6 +743,12 @@ func SimpleServer() {
 
 	s := NewRtmpServer()
 
+	go func() {
+		//time.Sleep(2*time.Second)
+		dumper := NewPlayerDumper(s, "tmp", "myapp")
+		dumper.Serve()
+
+	}()
 	go s.Loop()
 	for {
 		c, err := ln.Accept()
@@ -609,10 +757,14 @@ func SimpleServer() {
 			break
 		}
 		go func (c net.Conn) {
-			s.ServeClient(c)
+			peer := NewRtmpPeer(s, c)
+			peer.Serve()
 		} (c)
 	}
 }
+
+
+
 
 
 

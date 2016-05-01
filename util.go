@@ -5,15 +5,16 @@ import (
 	"io"
 	"log"
 	"os"
-	"fmt"
+	_ "fmt"
 	_ "strings"
 )
 
 type logger int
 
 func (l logger) Printf(format string, v ...interface{}) {
-	str := fmt.Sprintf(format, v...)
-	fmt.Println(str)
+	//str := fmt.Sprintf(format, v...)
+	//fmt.Println(str)
+	//
 	//switch {
 	//case strings.HasPrefix(str, "server") && l >= 1,
 	//		 strings.HasPrefix(str, "stream") && l >= 1,

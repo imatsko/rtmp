@@ -97,7 +97,6 @@ func (s *RtmpServer)Loop() {
 				e.Peer.Stop()
 			} else {
 				e.Peer.SetRole(PUBLISHER)
-				fmt.Printf("DUMP PUB: '%s'", e.Peer.App())
 				pubmap[e.Peer.App()] = e.Peer
 			}
 		case E_PLAY:
@@ -121,7 +120,6 @@ func (s *RtmpServer)Loop() {
 			delete(idmap, e.Peer.Id())
 		case E_EXTRA:
 			for _, peer := range idmap {
-				fmt.Printf("DUMP peer %+v chk %v\n", peer, peer.Role() == PLAYER && peer.App() == e.Peer.App())
 				if peer.Role() == PLAYER && peer.App() == e.Peer.App() {
 					w, h, extraA, extraV, meta := e.Peer.Meta()
 					peer.SetMeta(w, h, extraA, extraV, meta)
@@ -130,7 +128,6 @@ func (s *RtmpServer)Loop() {
 		case E_DATA:
 			for _, peer := range idmap {
 				if peer.Role() == PLAYER && peer.App() == e.Peer.App() {
-					fmt.Printf("DUMP send %v\n", e.Msg)
 					ok := peer.Send(e.Msg)
 					if !ok {
 						l.Printf("event %v: send failed", e.Peer)
@@ -163,7 +160,6 @@ type RtmpPeer interface {
 func (p *RtmpPeerImpl) Id() string { return p.id }
 func (p *RtmpPeerImpl) App() string {return p.app}
 func (p *RtmpPeerImpl) SetApp(app string) {
-	fmt.Printf("APP: %s\n", app)
 	p.app = app
 }
 func (p *RtmpPeerImpl) Meta() (w int, h int, extraA []byte, extraV []byte, meta AMFObj) {

@@ -2,7 +2,6 @@ package rtmp
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"math/rand"
 	"errors"
@@ -46,7 +45,7 @@ func checkResponse(b []byte, epoch []byte, random_data []byte) bool {
 	same_server := bytes.Equal(b[4:8], zeros)
 	same_random := bytes.Equal(b[8:], random_data)
 
-	fmt.Printf("same epoch %v same server %v same random %v\n", same_epoch, same_server, same_random)
+	l.Printf("handshake: same epoch %v same server %v same random %v\n", same_epoch, same_server, same_random)
 	return same_epoch && same_server && same_random
 
 }

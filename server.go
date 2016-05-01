@@ -14,20 +14,16 @@ import (
 	"strings"
 	_ "runtime/debug"
 	"io"
-	"errors"
-	"encoding/gob"
 )
 
-type eventID int
-
-type eventS struct {
-	id int
-	m *Msg
-	peer RtmpPeer
+type EventS struct {
+	Id   int
+	Msg  *Msg
+	Peer RtmpPeer
 }
 
-func (e eventS) String() string {
-	switch e.id {
+func (e EventS) String() string {
+	switch e.Id {
 	case E_NEW:
 		return "new"
 	case E_PUBLISH:
@@ -35,11 +31,11 @@ func (e eventS) String() string {
 	case E_PLAY:
 		return "play"
 	case E_DATA:
-		switch e.m.typeid {
+		switch e.Msg.TypeId {
 		case MSG_VIDEO:
-			return fmt.Sprintf("ts %d video %d bytes key %t", e.m.curts, e.m.data.Len(), e.m.key)
+			return fmt.Sprintf("ts %d video %d bytes key %t", e.Msg.CurTs, e.Msg.Data.Len(), e.Msg.Key)
 		case MSG_AUDIO:
-			return fmt.Sprintf("ts %d audio %d bytes", e.m.curts, e.m.data.Len())
+			return fmt.Sprintf("ts %d audio %d bytes", e.Msg.CurTs, e.Msg.Data.Len())
 		}
 	case E_CLOSE:
 		return "close"
@@ -70,14 +66,14 @@ const (
 )
 
 type RtmpServer struct {
-	event chan eventS
-	eventDone chan int
+	Event     chan EventS
+	EventDone chan int
 }
 
 func NewRtmpServer() *RtmpServer {
 	return &RtmpServer{
-	event: make(chan eventS, 0),
-		eventDone: make(chan int, 0),
+	Event: make(chan EventS, 0),
+		EventDone: make(chan int, 0),
 	}
 }
 
@@ -86,65 +82,65 @@ func (s *RtmpServer)Loop() {
 	pubmap := map[string]RtmpPeer{}
 
 	for {
-		e := <- s.event
-		if e.id == E_DATA {
-			l.Printf("data %v: %v", e.peer, e)
+		e := <- s.Event
+		if e.Id == E_DATA {
+			l.Printf("data %v: %v", e.Peer, e)
 		} else {
-			l.Printf("event %v: %v", e.peer, e)
+			l.Printf("event %v: %v", e.Peer, e)
 		}
-		switch e.id {
+		switch e.Id {
 		case E_NEW:
-			idmap[e.peer.Id()] = e.peer
+			idmap[e.Peer.Id()] = e.Peer
 		case E_PUBLISH:
-			if _, ok := pubmap[e.peer.App()]; ok {
-				l.Printf("event %v: duplicated publish with %v app %s", e.peer, pubmap[e.peer.App()], e.peer.App())
-				e.peer.Stop()
+			if _, ok := pubmap[e.Peer.App()]; ok {
+				l.Printf("event %v: duplicated publish with %v app %s", e.Peer, pubmap[e.Peer.App()], e.Peer.App())
+				e.Peer.Stop()
 			} else {
-				e.peer.SetRole(PUBLISHER)
-				fmt.Printf("DUMP PUB: '%s'", e.peer.App())
-				pubmap[e.peer.App()] = e.peer
+				e.Peer.SetRole(PUBLISHER)
+				fmt.Printf("DUMP PUB: '%s'", e.Peer.App())
+				pubmap[e.Peer.App()] = e.Peer
 			}
 		case E_PLAY:
-			e.peer.SetRole(PLAYER)
+			e.Peer.SetRole(PLAYER)
 			for _, peer := range idmap {
-				if peer.Role() == PUBLISHER && peer.App() == e.peer.App() && peer.DataReady(){
+				if peer.Role() == PUBLISHER && peer.App() == e.Peer.App() && peer.DataReady(){
 
 					w, h, extraA, extraV, meta := peer.Meta()
-					e.peer.SetMeta(w, h, extraA, extraV, meta)
+					e.Peer.SetMeta(w, h, extraA, extraV, meta)
 				}
 			}
 		case E_CLOSE:
-			if e.peer.Role() == PUBLISHER {
-				delete(pubmap, e.peer.App())
+			if e.Peer.Role() == PUBLISHER {
+				delete(pubmap, e.Peer.App())
 				for _, peer := range idmap {
-					if peer.Role() == PLAYER && peer.App() == e.peer.App() {
+					if peer.Role() == PLAYER && peer.App() == e.Peer.App() {
 						peer.Stop()
 					}
 				}
 			}
-			delete(idmap, e.peer.Id())
+			delete(idmap, e.Peer.Id())
 		case E_EXTRA:
 			for _, peer := range idmap {
-				fmt.Printf("DUMP peer %+v chk %v\n", peer, peer.Role() == PLAYER && peer.App() == e.peer.App())
-				if peer.Role() == PLAYER && peer.App() == e.peer.App() {
-					w, h, extraA, extraV, meta := e.peer.Meta()
+				fmt.Printf("DUMP peer %+v chk %v\n", peer, peer.Role() == PLAYER && peer.App() == e.Peer.App())
+				if peer.Role() == PLAYER && peer.App() == e.Peer.App() {
+					w, h, extraA, extraV, meta := e.Peer.Meta()
 					peer.SetMeta(w, h, extraA, extraV, meta)
 				}
 			}
 		case E_DATA:
 			for _, peer := range idmap {
-				if peer.Role() == PLAYER && peer.App() == e.peer.App() {
-					fmt.Printf("DUMP send %v\n", e.m)
-					ok := peer.Send(e.m)
+				if peer.Role() == PLAYER && peer.App() == e.Peer.App() {
+					fmt.Printf("DUMP send %v\n", e.Msg)
+					ok := peer.Send(e.Msg)
 					if !ok {
-						l.Printf("event %v: send failed", e.peer)
+						l.Printf("event %v: send failed", e.Peer)
 					} else {
-						l.Printf("event %v: send ok", e.peer)
+						l.Printf("event %v: send ok", e.Peer)
 					}
 				}
 			}
 		}
-		s.eventDone <- 1
+		s.EventDone <- 1
 	}
 }
 
@@ -225,8 +221,8 @@ type RtmpPeerImpl struct {
 func NewRtmpPeer(s *RtmpServer, c io.ReadWriteCloser) *RtmpPeerImpl {
 	mr := NewMsgStream(c)
 	peer := &RtmpPeerImpl{id: mr.id, s: s, mr:mr}
-	s.event <- eventS{id:E_NEW, peer: peer}
-	<- s.eventDone
+	s.Event <- EventS{Id:E_NEW, Peer: peer}
+	<- s.EventDone
 	return peer
 }
 
@@ -305,8 +301,8 @@ func (p *RtmpPeerImpl) handlePublish() {
 		},
 	})
 
-	p.s.event <- eventS{id:E_PUBLISH, peer: p}
-	<- p.s.eventDone
+	p.s.Event <- EventS{Id:E_PUBLISH, Peer: p}
+	<- p.s.EventDone
 }
 
 type testsrc struct {
@@ -357,8 +353,8 @@ func (p *RtmpPeerImpl) handlePlay(strid int) {
 	//tsrc = tsrcNew()
 
 	if tsrc == nil {
-		p.s.event <- eventS{id:E_PLAY, peer: p}
-		<- p.s.eventDone
+		p.s.Event <- EventS{Id:E_PLAY, Peer: p}
+		<- p.s.EventDone
 	} else {
 		l.Printf("stream %v: test play data in %s", p.mr, tsrc.dir)
 		p.W = tsrc.w
@@ -462,12 +458,12 @@ func (p *RtmpPeerImpl) handlePlay(strid int) {
 					p.mr.WriteAAC(strid, 0, p.extraA[2:])
 					p.mr.WritePPS(strid, 0, p.extraV[5:])
 				}
-				l.Printf("data %v: got %v curts %v", p.mr, m, m.curts)
-				switch m.typeid {
+				l.Printf("data %v: got %v curts %v", p.mr, m, m.CurTs)
+				switch m.TypeId {
 				case MSG_AUDIO:
-					p.mr.WriteAudio(strid, m.curts, m.data.Bytes()[2:])
+					p.mr.WriteAudio(strid, m.CurTs, m.Data.Bytes()[2:])
 				case MSG_VIDEO:
-					p.mr.WriteVideo(strid, m.curts, m.key, m.data.Bytes()[5:])
+					p.mr.WriteVideo(strid, m.CurTs, m.Key, m.Data.Bytes()[5:])
 				}
 				nr++
 			}
@@ -518,8 +514,8 @@ func (p *RtmpPeerImpl) handlePlay(strid int) {
 func (p *RtmpPeerImpl) Serve() {
 	defer func() {
 		if err := recover(); err != nil {
-			p.s.event <- eventS{id:E_CLOSE, peer: p}
-			<- p.s.eventDone
+			p.s.Event <- EventS{Id:E_CLOSE, Peer: p}
+			<- p.s.EventDone
 			l.Printf("stream %v: closed %v", p.mr, err)
 			//if err != "EOF" {
 			//	l.Printf("stream %v: %v", mr, string(debug.Stack()))
@@ -542,196 +538,57 @@ func (p *RtmpPeerImpl) Serve() {
 
 		l.Printf("stream %v: msg %v", p.mr, m)
 
-		if m.typeid == MSG_AUDIO || m.typeid == MSG_VIDEO {
+		if m.TypeId == MSG_AUDIO || m.TypeId == MSG_VIDEO {
 			if p.stat == WAIT_EXTRA {
-				if len(p.extraA) == 0 && m.typeid == MSG_AUDIO {
+				if len(p.extraA) == 0 && m.TypeId == MSG_AUDIO {
 			        p.l.Printf("event %v: extra got aac config", p.mr)
-			        p.extraA = m.data.Bytes()
+			        p.extraA = m.Data.Bytes()
 		        }
 
-				if len(p.extraV) == 0 && m.typeid == MSG_VIDEO {
+				if len(p.extraV) == 0 && m.TypeId == MSG_VIDEO {
 					l.Printf("event %v: extra got pps", p.mr)
-					p.extraV = m.data.Bytes()
+					p.extraV = m.Data.Bytes()
 				}
 				if len(p.extraA) > 0 && len(p.extraV) > 0 {
 					l.Printf("event %v: got all extra", p.mr)
 					p.stat = WAIT_DATA
-					p.s.event <- eventS{id:E_EXTRA, peer: p}
-					<- p.s.eventDone
+					p.s.Event <- EventS{Id:E_EXTRA, Peer: p}
+					<- p.s.EventDone
 				}
 
 			} else {
-				p.l.Printf("%d,%d", m.typeid, m.data.Len())
-				p.s.event <- eventS{id:E_DATA, m:m, peer: p}
-				<- p.s.eventDone
+				p.l.Printf("%d,%d", m.TypeId, m.Data.Len())
+				p.s.Event <- EventS{Id:E_DATA, Msg:m, Peer: p}
+				<- p.s.EventDone
 			}
 		}
-		if m.typeid == MSG_AMF_CMD || m.typeid == MSG_AMF_META {
-			a := ReadAMF(m.data)
+		if m.TypeId == MSG_AMF_CMD || m.TypeId == MSG_AMF_META {
+			a := ReadAMF(m.Data)
 			l.Printf("server: amfobj %v\n", a)
 			switch a.str {
 			case "connect":
-				a2 := ReadAMF(m.data)
-				a3 := ReadAMF(m.data)
+				a2 := ReadAMF(m.Data)
+				a3 := ReadAMF(m.Data)
 				if _, ok := a3.obj["app"]; !ok || a3.obj["app"].str == "" {
 					panic("connect: app not found")
 				}
 				p.handleConnect(a2.f64, a3.obj["app"].str)
 			case "@setDataFrame":
-				ReadAMF(m.data)
-				a3 := ReadAMF(m.data)
+				ReadAMF(m.Data)
+				a3 := ReadAMF(m.Data)
 				p.handleMeta(a3)
 				l.Printf("stream %v: setdataframe", p.mr)
 			case "createStream":
-				a2 := ReadAMF(m.data)
+				a2 := ReadAMF(m.Data)
 				p.handleCreateStream(a2.f64)
 			case "publish":
 				p.handlePublish()
 			case "play":
-				p.handlePlay(m.strid)
+				p.handlePlay(m.StrId)
 			}
 		}
 	}
 }
-
-
-func (p *RtmpPeerPlayerDumper) String() string {
-	return p.Id()
-}
-func (p *RtmpPeerPlayerDumper) Id() string { return p.id }
-func (p *RtmpPeerPlayerDumper) App() string {return p.app}
-func (p *RtmpPeerPlayerDumper) SetApp(app string) {p.app = app}
-func (p *RtmpPeerPlayerDumper) Meta() (w int, h int, extraA []byte, extraV []byte, meta AMFObj) {
-	return p.W, p.H, p.extraA, p.extraV, p.meta
-}
-func (p *RtmpPeerPlayerDumper) SetMeta(w int, h int, extraA []byte, extraV []byte, meta AMFObj) {
-	p.W = w
-	p.H = h
-	p.extraA = extraA
-	p.extraV = extraV
-	p.meta = meta
-	p.dumpMeta()
-}
-
-func (p *RtmpPeerPlayerDumper) Role() int {return p.role}
-func (p *RtmpPeerPlayerDumper) SetRole(role int) {
-	if(role != PLAYER) {
-		panic(errors.New("Player only"))
-	}
-}
-
-func (p *RtmpPeerPlayerDumper) DataReady() bool {return false}
-
-func (p *RtmpPeerPlayerDumper) Send(m *Msg) bool {
-	fmt.Printf("DUMP send %+v", m)
-	ch := reflect.ValueOf(p.que)
-	return ch.TrySend(reflect.ValueOf(m))
-}
-
-func (p *RtmpPeerPlayerDumper) Stop() bool {
-	return p.Send(nil)
-}
-
-func (p *RtmpPeerPlayerDumper) dumpMeta() {
-
-	fmt.Println("DUMP meta")
-
-	size_f, _ := os.Create(p.dir+"/size")
-	defer size_f.Close()
-	fmt.Fprintf(size_f, "%dx%d", p.W, p.H)
-
-	ioutil.WriteFile(p.dir + "/extraA", p.extraA, 0644)
-	ioutil.WriteFile(p.dir + "/extraV", p.extraA, 0644)
-
-
-	meta_f, _ := os.Create(p.dir+"/meta")
-	defer meta_f.Close()
-	meta_enc := gob.NewEncoder(meta_f)
-	meta_enc.Encode(p.meta)
-}
-
-func (p *RtmpPeerPlayerDumper) dumpVideo(nr int, ts int, key bool, data []byte) {
-	fmt.Println("DUMP audio")
-
-	name := fmt.Sprintf("%s/h264-%d-%d", p.dir, nr, ts)
-	if key { name = name+"-k" }
-	ioutil.WriteFile(name, data, 0644)
-}
-func (p *RtmpPeerPlayerDumper) dumpAudio(nr int, ts int, data []byte) {
-	fmt.Println("DUMP video")
-
-	name := fmt.Sprintf("%s/aac-%d-%d", p.dir, nr, ts)
-	ioutil.WriteFile(name, data, 0644)
-}
-
-type RtmpPeerPlayerDumper struct {
-	id string
-
-	s *RtmpServer
-	que chan *Msg
-
-	dir string
-
-	role int
-	stat int
-	app string
-	W,H int
-	extraA, extraV []byte
-    meta AMFObj
-}
-
-func NewPlayerDumper(s *RtmpServer, dir string, app string) *RtmpPeerPlayerDumper {
-	dumper := new(RtmpPeerPlayerDumper)
-	dumper.s = s
-	dumper.dir = dir
-	dumper.app = app
-	dumper.role = PLAYER
-	fmt.Printf("DUMP app '%s'\n", app)
-	dumper.id = fmt.Sprintf("%s: %s", app, dir)
-	dumper.que = make(chan *Msg, 16)
-
-	return dumper
-}
-
-func (p *RtmpPeerPlayerDumper) Serve() {
-	defer func() {
-		p.s.event <- eventS{id:E_CLOSE, peer: p}
-		<- p.s.eventDone
-		if err := recover(); err != nil {
-			l.Printf("DUMP stream %v: closed %v", p, err)
-			//if err != "EOF" {
-			//	l.Printf("stream %v: %v", mr, string(debug.Stack()))
-			//}
-		}
-	}()
-
-	p.s.event <- eventS{id:E_NEW, peer: p}
-	<- p.s.eventDone
-
-	p.s.event <- eventS{id:E_PLAY, peer: p}
-	<- p.s.eventDone
-
-	fmt.Println("Start DUMP")
-
-	nr := 0
-	for {
-		m := <- p.que
-		fmt.Printf("DUMP got msg %+v\n", m)
-		if m == nil {
-			break
-		}
-		l.Printf("DUMP data %v: got %v curts %v", p, m, m.curts)
-		switch m.typeid {
-			case MSG_AUDIO:
-				p.dumpAudio(nr, m.curts, m.data.Bytes())
-			case MSG_VIDEO:
-				p.dumpVideo(nr, m.curts, m.key, m.data.Bytes())
-			}
-			nr++
-	}
-
-}
-
 
 func SimpleServer() {
 	l.Printf("server: simple server starts")
@@ -743,12 +600,6 @@ func SimpleServer() {
 
 	s := NewRtmpServer()
 
-	go func() {
-		//time.Sleep(2*time.Second)
-		dumper := NewPlayerDumper(s, "tmp", "myapp")
-		dumper.Serve()
-
-	}()
 	go s.Loop()
 	for {
 		c, err := ln.Accept()

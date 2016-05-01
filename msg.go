@@ -40,52 +40,52 @@ var (
 )
 
 type chunkHeader struct {
-	typeid int
-	mlen int
-	csid int
-	cfmt int
-	ts int
-	tsdelta int
-	strid int
+	TypeId  int
+	MLen    int
+	Csid    int
+	Cfmt    int
+	Ts      int
+	TsDelta int
+	StrId   int
 }
 
 func readChunkHeader (r io.Reader) (m chunkHeader) {
 	i := ReadInt(r, 1)
-	m.cfmt = (i>>6)&3;
-	m.csid = i&0x3f;
+	m.Cfmt = (i>>6)&3;
+	m.Csid = i&0x3f;
 
-	if m.csid == 0 {
+	if m.Csid == 0 {
 		j := ReadInt(r, 1)
-		m.csid = j + 64
+		m.Csid = j + 64
 	}
 
-	if m.csid == 0x3f {
+	if m.Csid == 0x3f {
 		j := ReadInt(r, 2)
-		m.csid = j + 64
+		m.Csid = j + 64
 	}
 
-	if m.cfmt == 0 {
-		m.ts = ReadInt(r, 3)
-		m.mlen = ReadInt(r, 3)
-		m.typeid = ReadInt(r, 1)
-		m.strid = ReadIntLE(r, 4)
+	if m.Cfmt == 0 {
+		m.Ts = ReadInt(r, 3)
+		m.MLen = ReadInt(r, 3)
+		m.TypeId = ReadInt(r, 1)
+		m.StrId = ReadIntLE(r, 4)
 	}
 
-	if m.cfmt == 1 {
-		m.tsdelta = ReadInt(r, 3)
-		m.mlen = ReadInt(r, 3)
-		m.typeid = ReadInt(r, 1)
+	if m.Cfmt == 1 {
+		m.TsDelta = ReadInt(r, 3)
+		m.MLen = ReadInt(r, 3)
+		m.TypeId = ReadInt(r, 1)
 	}
 
-	if m.cfmt == 2 {
-		m.tsdelta = ReadInt(r, 3)
+	if m.Cfmt == 2 {
+		m.TsDelta = ReadInt(r, 3)
 	}
 
-	if m.ts == 0xffffff {
-		m.ts = ReadInt(r, 4)
+	if m.Ts == 0xffffff {
+		m.Ts = ReadInt(r, 4)
 	}
-	if m.tsdelta == 0xffffff {
-		m.tsdelta = ReadInt(r, 4)
+	if m.TsDelta == 0xffffff {
+		m.TsDelta = ReadInt(r, 4)
 	}
 
 	//l.Printf("chunk:   %v", m)
@@ -116,20 +116,20 @@ type MsgStream struct {
 
 type Msg struct {
 	chunkHeader
-	data *bytes.Buffer
+	Data  *bytes.Buffer
 
-	key bool
-	curts int
+	Key   bool
+	CurTs int
 }
 
 func (m *Msg) String() string {
 	var typestr string
-	if m.typeid < len(MsgTypeStr) {
-		typestr = MsgTypeStr[m.typeid]
+	if m.TypeId < len(MsgTypeStr) {
+		typestr = MsgTypeStr[m.TypeId]
 	} else {
 		typestr = "?"
 	}
-	return fmt.Sprintf("%s %d %v", typestr, m.mlen, m.chunkHeader)
+	return fmt.Sprintf("%s %d %v", typestr, m.MLen, m.chunkHeader)
 }
 
 var (
@@ -241,48 +241,48 @@ func (r *MsgStream) WriteMsg32(csid, typeid, strid, v int) {
 
 func (r *MsgStream) ReadMsg() *Msg {
 	ch := readChunkHeader(r.r)
-	m, ok := r.Msg[ch.csid]
+	m, ok := r.Msg[ch.Csid]
 	if !ok {
 		//l.Printf("chunk:   new")
 		m = &Msg{ch, &bytes.Buffer{}, false, 0}
-		r.Msg[ch.csid] = m
+		r.Msg[ch.Csid] = m
 	}
 
-	switch ch.cfmt {
+	switch ch.Cfmt {
 	case 0:
-		m.ts = ch.ts
-		m.mlen = ch.mlen
-		m.typeid = ch.typeid
-		m.curts = m.ts
+		m.Ts = ch.Ts
+		m.MLen = ch.MLen
+		m.TypeId = ch.TypeId
+		m.CurTs = m.Ts
 	case 1:
-		m.tsdelta = ch.tsdelta
-		m.mlen = ch.mlen
-		m.typeid = ch.typeid
-		m.curts += m.tsdelta
+		m.TsDelta = ch.TsDelta
+		m.MLen = ch.MLen
+		m.TypeId = ch.TypeId
+		m.CurTs += m.TsDelta
 	case 2:
-		m.tsdelta = ch.tsdelta
+		m.TsDelta = ch.TsDelta
 	}
 
-	left := m.mlen - m.data.Len()
+	left := m.MLen - m.Data.Len()
 	size := 128
 	if size > left {
 		size = left
 	}
 	//l.Printf("chunk:   %v", m)
 	if size > 0 {
-		io.CopyN(m.data, r.r, int64(size))
+		io.CopyN(m.Data, r.r, int64(size))
 	}
 
 	if size == left {
 		rm := new(Msg)
 		*rm = *m
-		l.Printf("event: fmt%d %v curts %d pre %v", ch.cfmt, m, m.curts, m.data.Bytes()[:9])
-		if m.typeid == MSG_VIDEO && int(m.data.Bytes()[0]) == 0x17 {
-			rm.key = true
+		l.Printf("event: fmt%d %v curts %d pre %v", ch.Cfmt, m, m.CurTs, m.Data.Bytes()[:9])
+		if m.TypeId == MSG_VIDEO && int(m.Data.Bytes()[0]) == 0x17 {
+			rm.Key = true
 		} else {
-			rm.key = false
+			rm.Key = false
 		}
-		m.data = &bytes.Buffer{}
+		m.Data = &bytes.Buffer{}
 		return rm
 	}
 

@@ -237,20 +237,20 @@ func (p *RtmpPeerImpl) handleConnect(trans float64, app string) {
 	p.mr.WriteMsg32(2, MSG_CHUNK_SIZE, 0, 128)
 
 	p.mr.WriteAMFCmd(3, 0, []AMFObj {
-		AMFObj { atype : AMF_STRING, str : "_result", },
-		AMFObj { atype : AMF_NUMBER, f64 : trans, },
-		AMFObj { atype : AMF_OBJECT,
-			obj : map[string] AMFObj {
-				"fmtVer" : AMFObj { atype : AMF_STRING, str : "FMS/3,0,1,123", },
-				"capabilities" : AMFObj { atype : AMF_NUMBER, f64 : 31, },
+		AMFObj { AType : AMF_STRING, Str : "_result", },
+		AMFObj { AType : AMF_NUMBER, F64 : trans, },
+		AMFObj { AType : AMF_OBJECT,
+			Obj : map[string] AMFObj {
+				"fmtVer" : AMFObj { AType : AMF_STRING, Str : "FMS/3,0,1,123", },
+				"capabilities" : AMFObj { AType : AMF_NUMBER, F64 : 31, },
 			},
 		},
-		AMFObj { atype : AMF_OBJECT,
-			obj : map[string] AMFObj {
-				"level" : AMFObj { atype : AMF_STRING, str : "status", },
-				"code" : AMFObj { atype : AMF_STRING, str : "NetConnection.Connect.Success", },
-				"description" : AMFObj { atype : AMF_STRING, str : "Connection Success.", },
-				"objectEncoding" : AMFObj { atype : AMF_NUMBER, f64 : 0, },
+		AMFObj { AType : AMF_OBJECT,
+			Obj : map[string] AMFObj {
+				"level" : AMFObj { AType : AMF_STRING, Str : "status", },
+				"code" : AMFObj { AType : AMF_STRING, Str : "NetConnection.Connect.Success", },
+				"description" : AMFObj { AType : AMF_STRING, Str : "Connection Success.", },
+				"objectEncoding" : AMFObj { AType : AMF_NUMBER, F64 : 0, },
 			},
 		},
 	})
@@ -259,8 +259,8 @@ func (p *RtmpPeerImpl) handleConnect(trans float64, app string) {
 func (p *RtmpPeerImpl) handleMeta(obj AMFObj) {
 
 	p.meta = obj
-	p.W = int(obj.obj["width"].f64)
-	p.H = int(obj.obj["height"].f64)
+	p.W = int(obj.Obj["width"].F64)
+	p.H = int(obj.Obj["height"].F64)
 
 	l.Printf("stream %v: meta video %dx%d (%v)", p.mr, p.W, p.H, obj)
 }
@@ -270,10 +270,10 @@ func (p *RtmpPeerImpl) handleCreateStream(trans float64) {
 	l.Printf("stream %v: createStream", p.mr)
 
 	p.mr.WriteAMFCmd(3, 0, []AMFObj {
-		AMFObj { atype : AMF_STRING, str : "_result", },
-		AMFObj { atype : AMF_NUMBER, f64 : trans, },
-		AMFObj { atype : AMF_NULL, },
-		AMFObj { atype : AMF_NUMBER, f64 : 1 },
+		AMFObj { AType : AMF_STRING, Str : "_result", },
+		AMFObj { AType : AMF_NUMBER, F64 : trans, },
+		AMFObj { AType : AMF_NULL, },
+		AMFObj { AType : AMF_NUMBER, F64 : 1 },
 	})
 }
 
@@ -285,14 +285,14 @@ func (p *RtmpPeerImpl) handlePublish() {
 	l.Printf("stream %v: publish", p.mr)
 
 	p.mr.WriteAMFCmd(3, 0, []AMFObj {
-		AMFObj { atype : AMF_STRING, str : "onStatus", },
-		AMFObj { atype : AMF_NUMBER, f64 : 0, },
-		AMFObj { atype : AMF_NULL, },
-		AMFObj { atype : AMF_OBJECT,
-			obj : map[string] AMFObj {
-				"level" : AMFObj { atype : AMF_STRING, str : "status", },
-				"code" : AMFObj { atype : AMF_STRING, str : "NetStream.Publish.Start", },
-				"description" : AMFObj { atype : AMF_STRING, str : "Start publising.", },
+		AMFObj { AType : AMF_STRING, Str : "onStatus", },
+		AMFObj { AType : AMF_NUMBER, F64 : 0, },
+		AMFObj { AType : AMF_NULL, },
+		AMFObj { AType : AMF_OBJECT,
+			Obj : map[string] AMFObj {
+				"level" : AMFObj { AType : AMF_STRING, Str : "status", },
+				"code" : AMFObj { AType : AMF_STRING, Str : "NetStream.Publish.Start", },
+				"description" : AMFObj { AType : AMF_STRING, Str : "Start publising.", },
 			},
 		},
 	})
@@ -366,14 +366,14 @@ func (p *RtmpPeerImpl) handlePlay(strid int) {
 		p.mr.WriteMsg(0, 2, MSG_USER, 0, 0, b.Bytes()) // stream begin 1
 
 		p.mr.WriteAMFCmd(5, strid, []AMFObj {
-			AMFObj { atype : AMF_STRING, str : "onStatus", },
-			AMFObj { atype : AMF_NUMBER, f64 : 0, },
-			AMFObj { atype : AMF_NULL, },
-			AMFObj { atype : AMF_OBJECT,
-				obj : map[string] AMFObj {
-					"level" : AMFObj { atype : AMF_STRING, str : "status", },
-					"code" : AMFObj { atype : AMF_STRING, str : "NetStream.Play.Start", },
-					"description" : AMFObj { atype : AMF_STRING, str : "Start live.", },
+			AMFObj { AType : AMF_STRING, Str : "onStatus", },
+			AMFObj { AType : AMF_NUMBER, F64 : 0, },
+			AMFObj { AType : AMF_NULL, },
+			AMFObj { AType : AMF_OBJECT,
+				Obj : map[string] AMFObj {
+					"level" : AMFObj { AType : AMF_STRING, Str : "status", },
+					"code" : AMFObj { AType : AMF_STRING, Str : "NetStream.Play.Start", },
+					"description" : AMFObj { AType : AMF_STRING, Str : "Start live.", },
 				},
 			},
 		})
@@ -381,16 +381,16 @@ func (p *RtmpPeerImpl) handlePlay(strid int) {
 		l.Printf("stream %v: begin: video %dx%d", p.mr, p.W, p.H)
 
 		p.mr.WriteAMFMeta(5, strid, []AMFObj {
-			AMFObj { atype : AMF_STRING, str : "|RtmpSampleAccess", },
-			AMFObj { atype : AMF_BOOLEAN, i: 1, },
-			AMFObj { atype : AMF_BOOLEAN, i: 1, },
+			AMFObj { AType : AMF_STRING, Str : "|RtmpSampleAccess", },
+			AMFObj { AType : AMF_BOOLEAN, I: 1, },
+			AMFObj { AType : AMF_BOOLEAN, I: 1, },
 		})
 
-		p.meta.obj["Server"] = AMFObj { atype : AMF_STRING, str : "Golang Rtmp Server", }
-		p.meta.atype = AMF_OBJECT
+		p.meta.Obj["Server"] = AMFObj { AType : AMF_STRING, Str : "Golang Rtmp Server", }
+		p.meta.AType = AMF_OBJECT
 		l.Printf("stream %v: %v", p.mr, p.meta)
 		p.mr.WriteAMFMeta(5, strid, []AMFObj {
-			AMFObj { atype : AMF_STRING, str : "onMetaData", },
+			AMFObj { AType : AMF_STRING, Str : "onMetaData", },
 			p.meta,
 			/*
 			AMFObj { atype : AMF_OBJECT,
@@ -422,14 +422,14 @@ func (p *RtmpPeerImpl) handlePlay(strid int) {
 		p.mr.WriteMsg(0, 2, MSG_USER, 0, 0, b.Bytes()) // stream eof 1
 
 		p.mr.WriteAMFCmd(5, strid, []AMFObj {
-			AMFObj { atype : AMF_STRING, str : "onStatus", },
-			AMFObj { atype : AMF_NUMBER, f64 : 0, },
-			AMFObj { atype : AMF_NULL, },
-			AMFObj { atype : AMF_OBJECT,
-				obj : map[string] AMFObj {
-					"level" : AMFObj { atype : AMF_STRING, str : "status", },
-					"code" : AMFObj { atype : AMF_STRING, str : "NetStream.Play.Stop", },
-					"description" : AMFObj { atype : AMF_STRING, str : "Stop live.", },
+			AMFObj { AType : AMF_STRING, Str : "onStatus", },
+			AMFObj { AType : AMF_NUMBER, F64 : 0, },
+			AMFObj { AType : AMF_NULL, },
+			AMFObj { AType : AMF_OBJECT,
+				Obj : map[string] AMFObj {
+					"level" : AMFObj { AType : AMF_STRING, Str : "status", },
+					"code" : AMFObj { AType : AMF_STRING, Str : "NetStream.Play.Stop", },
+					"description" : AMFObj { AType : AMF_STRING, Str : "Stop live.", },
 				},
 			},
 		})
@@ -561,14 +561,14 @@ func (p *RtmpPeerImpl) Serve() {
 		if m.TypeId == MSG_AMF_CMD || m.TypeId == MSG_AMF_META {
 			a := ReadAMF(m.Data)
 			l.Printf("server: amfobj %v\n", a)
-			switch a.str {
+			switch a.Str {
 			case "connect":
 				a2 := ReadAMF(m.Data)
 				a3 := ReadAMF(m.Data)
-				if _, ok := a3.obj["app"]; !ok || a3.obj["app"].str == "" {
+				if _, ok := a3.Obj["app"]; !ok || a3.Obj["app"].Str == "" {
 					panic("connect: app not found")
 				}
-				p.handleConnect(a2.f64, a3.obj["app"].str)
+				p.handleConnect(a2.F64, a3.Obj["app"].Str)
 			case "@setDataFrame":
 				ReadAMF(m.Data)
 				a3 := ReadAMF(m.Data)
@@ -576,7 +576,7 @@ func (p *RtmpPeerImpl) Serve() {
 				l.Printf("stream %v: setdataframe", p.mr)
 			case "createStream":
 				a2 := ReadAMF(m.Data)
-				p.handleCreateStream(a2.f64)
+				p.handleCreateStream(a2.F64)
 			case "publish":
 				p.handlePublish()
 			case "play":

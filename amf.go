@@ -24,64 +24,64 @@ var (
 )
 
 type AMFObj struct {
-	atype int
-	str string
-	i int
-	buf []byte
-	obj map[string]AMFObj
-	f64 float64
+	AType int
+	Str   string
+	I     int
+	Buf   []byte
+	Obj   map[string]AMFObj
+	F64   float64
 }
 
 func ReadAMF(r io.Reader) (a AMFObj) {
-	a.atype = ReadInt(r, 1)
-	switch (a.atype) {
+	a.AType = ReadInt(r, 1)
+	switch (a.AType) {
 	case AMF_STRING:
 		n := ReadInt(r, 2)
 		b := ReadBuf(r, n)
-		a.str = string(b)
+		a.Str = string(b)
 	case AMF_NUMBER:
-		binary.Read(r, binary.BigEndian, &a.f64)
+		binary.Read(r, binary.BigEndian, &a.F64)
 	case AMF_BOOLEAN:
-		a.i = ReadInt(r, 1)
+		a.I = ReadInt(r, 1)
 	case AMF_MIXED_ARRAY:
 		ReadInt(r, 4)
 		fallthrough
 	case AMF_OBJECT:
-		a.obj = map[string]AMFObj{}
+		a.Obj = map[string]AMFObj{}
 		for {
 			n := ReadInt(r, 2)
 			if n == 0 {
 				break
 			}
 			name := string(ReadBuf(r, n))
-			a.obj[name] = ReadAMF(r)
+			a.Obj[name] = ReadAMF(r)
 		}
 	case AMF_ARRAY, AMF_VARIANT_:
 		panic("amf: read: unsupported array or variant")
 	case AMF_INT8:
-		a.i = ReadInt(r, 1)
+		a.I = ReadInt(r, 1)
 	case AMF_INT16:
-		a.i = ReadInt(r, 2)
+		a.I = ReadInt(r, 2)
 	case AMF_INT32:
-		a.i = ReadInt(r, 4)
+		a.I = ReadInt(r, 4)
 	}
 	return
 }
 
 func WriteAMF(r io.Writer, a AMFObj) {
-	WriteInt(r, a.atype, 1)
-	switch (a.atype) {
+	WriteInt(r, a.AType, 1)
+	switch (a.AType) {
 	case AMF_STRING:
-		WriteInt(r, len(a.str), 2)
-		r.Write([]byte(a.str))
+		WriteInt(r, len(a.Str), 2)
+		r.Write([]byte(a.Str))
 	case AMF_NUMBER:
-		binary.Write(r, binary.BigEndian, a.f64)
+		binary.Write(r, binary.BigEndian, a.F64)
 	case AMF_BOOLEAN:
-		WriteInt(r, a.i, 1)
+		WriteInt(r, a.I, 1)
 	case AMF_MIXED_ARRAY:
-		r.Write(a.buf[:4])
+		r.Write(a.Buf[:4])
 	case AMF_OBJECT:
-		for name, val := range a.obj {
+		for name, val := range a.Obj {
 			WriteInt(r, len(name), 2)
 			r.Write([]byte(name))
 			WriteAMF(r, val)
@@ -90,11 +90,11 @@ func WriteAMF(r io.Writer, a AMFObj) {
 	case AMF_ARRAY, AMF_VARIANT_:
 		panic("amf: write unsupported array, var")
 	case AMF_INT8:
-		WriteInt(r, a.i, 1)
+		WriteInt(r, a.I, 1)
 	case AMF_INT16:
-		WriteInt(r, a.i, 2)
+		WriteInt(r, a.I, 2)
 	case AMF_INT32:
-		WriteInt(r, a.i, 4)
+		WriteInt(r, a.I, 4)
 	}
 }
 

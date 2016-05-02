@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	_ "fmt"
-	_ "strings"
 )
 
 type logger int
